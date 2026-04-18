@@ -1,4 +1,4 @@
--- ================= SDGT ELIT 完整版（含飞行、半无敌、枪械功能） =================
+-- ================= SDGT ELIT 稳定版（无 hook，兼容所有执行器） =================
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
@@ -11,7 +11,7 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Camera = workspace:WaitForChild("Camera")
 
--- ========== 原 CFG 配置（完整保留） ==========
+-- ========== 原 CFG 配置 ==========
 local CFG = {
     JUMP_ON = false,
     AUTO_FACE_ON = false,
@@ -43,11 +43,10 @@ local CFG = {
     MAX_RANGE = 200,
     HAND_MORTAR_TIMING = false,
 
-    -- 新增配置
-    HALF_WUDI_ON = false,    -- 半无敌
+    HALF_WUDI_ON = false,
 }
 
--- 枪械功能配置（独立于 CFG，但使用相同的变量名）
+-- 枪械功能配置（独立）
 local GUN = {
     AUTO_SHOOT = false,
     INSTANT_SHOOT = false,
@@ -58,27 +57,10 @@ local GUN = {
     FOV_SIZE = 50,
     PREDICTION = 0.2,
     MAX_RANGE = 200,
-    SILENT_AIM = false,
-    SILENT_AIM_SAVE_PLAYERS = false,
-    SILENT_AIM_BOMBER_NEAR = false,
-    SILENT_AIM_USE_FOV = false,
-    SILENT_AIM_FOV_SIZE = 50,
-    AUTO_SAVE_PLAYERS = false,
-    INSTANT_SAVE_PLAYERS = false,
-    SAVE_PLAYER_DELAY = 0.5,
-    SAVE_PLAYER_RANGE = 200,
-    BOMBER_SAFE_TEAMMATES = false,
-    BOMBER_SAFE_SELF = false,
-    BOMBER_SAFE_RADIUS = 10,
-    SHOOT_BOMBER_NEAR_TEAMMATES = false,
-    TARGET_ESP = false,
-    AIM_DOT = false,
     SELECTED_SHOOT_TYPES = {},
-    SELECTED_SILENT_AIM_TYPES = {},
-    SAVE_PLAYER_WHITELIST = {},
 }
 
--- 原有 ESP 配置（不变）
+-- 原有 ESP 配置
 local activeStates = {}
 local espHighlights = {}
 local persistentBurners = {}
@@ -124,10 +106,8 @@ local silentAimCurrentTarget = nil
 local fovGui = nil
 local fovCircle = nil
 local reloadInProgress = {}
-local activeConnections = {}
-local watchedTools = {}
 
--- ========== 半无敌（碰飞）变量和函数 ==========
+-- ========== 半无敌（碰飞） ==========
 local halfWudiTarget = nil
 local halfWudiMoveRunning = true
 local halfWudiPushRunning = true
@@ -152,9 +132,9 @@ LocalPlayer.Chatted:Connect(function(msg)
     end
 end)
 
-task.spawn(function()
+spawn(function()
     while halfWudiMoveRunning do
-        task.wait()
+        wait()
         if not CFG.HALF_WUDI_ON or not halfWudiTarget then
             local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
             if hum then hum:Move(Vector3.zero) end
@@ -178,9 +158,9 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
+spawn(function()
     while halfWudiPushRunning do
-        task.wait()
+        wait()
         if not CFG.HALF_WUDI_ON then
             local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
             if hum then hum:Move(Vector3.zero) end
@@ -191,7 +171,7 @@ task.spawn(function()
     end
 end)
 
--- ========== 飞行绕过独立UI（完全原样） ==========
+-- ========== 飞行绕过独立UI（无 hook 版本，去掉摔伤拦截避免冲突） ==========
 local flyScreenGui = nil
 local function createFlyUI()
     if flyScreenGui then flyScreenGui:Destroy() end
@@ -256,7 +236,7 @@ local function createFlyUI()
         bg = Instance.new("BodyGyro", hrp)
         bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
         bg.P = 8000
-        task.spawn(function()
+        spawn(function()
             local ctrl = getFlyControl()
             while isFlying and char and char.Parent do
                 if ctrl then
@@ -347,19 +327,9 @@ local function createFlyUI()
 
     MainFrame.Size = UDim2.new(0, 0, 0, 0)
     MainFrame:TweenSize(UDim2.new(0, 180, 0, 140), "Out", "Back", 0.5)
-
-    -- 摔伤拦截
-    local mt = getrawmetatable(game)
-    local oldNC = mt.__namecall
-    setreadonly(mt, false)
-    mt.__namecall = newcclosure(function(self, ...)
-        if getnamecallmethod() == "FireServer" and tostring(self) == "ForceSelfDamage" then return nil end
-        return oldNC(self, ...)
-    end)
-    setreadonly(mt, true)
 end
 
--- ========== 枪械功能核心（从 message.txt 提取） ==========
+-- ========== 枪械核心（无 hook，仅自动射击和装填） ==========
 local function isGun(tool)
     if not tool or not tool:IsA("Tool") then return false end
     local animFolder = tool:FindFirstChild("Animations")
@@ -442,16 +412,16 @@ local function gunPerformReload(tool, targetShots)
     reloadInProgress[tool] = true
     local remote = findRemote(tool)
     if not remote then reloadInProgress[tool]=nil return end
-    if targetShots>1 then pcall(function() remote:FireServer("StartReload") end) task.wait(0.1) end
+    if targetShots>1 then pcall(function() remote:FireServer("StartReload") end) wait(0.1) end
     for _=1,50 do
         if getShotsLoaded(tool) >= targetShots then
             pcall(function() tool.Parent = LocalPlayer.Backpack end)
-            task.wait(0.02)
+            wait(0.02)
             pcall(function() tool.Parent = LocalPlayer.Character end)
             break
         end
         pcall(function() remote:FireServer("Reload") end)
-        task.wait(0.05)
+        wait(0.05)
     end
     reloadInProgress[tool]=nil
 end
@@ -460,16 +430,15 @@ local function gunTryReload(tool)
     if not GUN.AUTO_RELOAD or not isGun(tool) then return end
     local shots = getShotsLoaded(tool)
     if tool.Name == "Nock Gun" and shots < 7 then
-        task.spawn(gunPerformReload, tool, 7)
+        spawn(gunPerformReload, tool, 7)
     elseif (tool.Name == "Double Barrel Pistol" or tool.Name == "Horse Artillery Pistol") and shots == 0 then
-        task.spawn(gunPerformReload, tool, 2)
+        spawn(gunPerformReload, tool, 2)
     elseif shots == 0 then
-        task.spawn(gunPerformReload, tool, 1)
+        spawn(gunPerformReload, tool, 1)
     end
 end
 
--- 枪械自动射击循环
-task.spawn(function()
+spawn(function()
     while true do
         if GUN.AUTO_SHOOT then
             local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
@@ -485,11 +454,10 @@ task.spawn(function()
                 end
             end
         end
-        task.wait(0.05)
+        wait(0.05)
     end
 end)
 
--- 自动装填监听
 LocalPlayer.CharacterAdded:Connect(function(char)
     char.ChildAdded:Connect(function(child)
         if child:IsA("Tool") and isGun(child) then
@@ -502,7 +470,7 @@ end)
 -- 枪械 FOV 显示
 local gunFovGui, gunFovCircle = nil, nil
 RunService.RenderStepped:Connect(function()
-    if GUN.SHOW_FOV and (GUN.AUTO_SHOOT or GUN.SILENT_AIM) then
+    if GUN.SHOW_FOV and GUN.AUTO_SHOOT then
         if not gunFovGui then
             gunFovGui = Instance.new("ScreenGui", PlayerGui)
             gunFovGui.Name = "GunFovGui"
@@ -531,41 +499,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- 静默瞄准 Hook（保留原有 Hook，但使用 GUN 变量）
-local oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-    local method = getnamecallmethod()
-    local args = {...}
-    if GUN.SILENT_AIM and method == "Raycast" and (self == Workspace or self.ClassName == "Workspace") and not checkcaller() and silentAimCurrentTarget then
-        local origin = args[1]
-        local aimPos = silentAimCurrentTarget.Position
-        local dir = (aimPos - origin)
-        args[2] = dir.Unit * (dir.Magnitude + 10)
-        return oldNamecall(self, unpack(args))
-    end
-    return oldNamecall(self, ...)
-end)
-
-local oldIndex = hookmetamethod(game, "__index", function(self, index)
-    if GUN.SILENT_AIM and self == LocalPlayer:GetMouse() and (index == "Hit" or index == "Target") and not checkcaller() and silentAimCurrentTarget then
-        return index == "Hit" and silentAimCurrentTarget.CFrame or silentAimCurrentTarget
-    end
-    return oldIndex(self, index)
-end)
-
--- 静默瞄准目标更新
-task.spawn(function()
-    while true do
-        if GUN.SILENT_AIM then
-            local targetPart = getNearestZombieForGun(GUN.MAX_RANGE, GUN.SELECTED_SILENT_AIM_TYPES)
-            silentAimCurrentTarget = targetPart
-        else
-            silentAimCurrentTarget = nil
-        end
-        task.wait(0.1)
-    end
-end)
-
--- ========== 原有函数（未改动，确保 SDGT ELIT UI 完整） ==========
+-- ========== 原有近战功能（核心杀戮、刺刀等） ==========
 local function ensureFovGui()
     if fovGui and fovGui.Parent then return fovGui, fovCircle end
     fovGui = Instance.new("ScreenGui", PlayerGui)
@@ -624,7 +558,6 @@ local function isWorldPosInFov(worldPos)
     return dist <= (sizePx / 2)
 end
 
--- 原有枪械函数（保留，但新枪械功能已独立，这部分仅用于原有 Gun Mods 功能）
 local function isGunOld(tool)
     if not tool or not tool:IsA("Tool") then return false end
     local animFolder = tool:FindFirstChild("Animations")
@@ -668,18 +601,18 @@ local function performReload(tool, targetShots)
     local remote = findRemoteForTool(tool)
     if not remote then reloadInProgress[tool] = nil return end
     
-    if targetShots > 1 then pcall(function() remote:FireServer("StartReload") end) task.wait(0.1) end
+    if targetShots > 1 then pcall(function() remote:FireServer("StartReload") end) wait(0.1) end
     
     local attempts = 0
     while attempts < 50 do
         if getShotsLoadedForTool(tool) >= targetShots then
             pcall(function() tool.Parent = LocalPlayer.Backpack end)
-            task.wait(0.02)
+            wait(0.02)
             pcall(function() tool.Parent = LocalPlayer.Character end)
             break
         end
         pcall(function() remote:FireServer("Reload") end)
-        task.wait(0.05)
+        wait(0.05)
         attempts = attempts + 1
     end
     reloadInProgress[tool] = nil
@@ -689,11 +622,11 @@ local function tryReloadTool(tool)
     if not CFG.AUTO_RELOAD or not isGunOld(tool) then return end
     local shots = getShotsLoadedForTool(tool)
     if tool.Name == "Nock Gun" and shots < 7 then
-        task.spawn(performReload, tool, 7)
+        spawn(performReload, tool, 7)
     elseif (tool.Name == "Double Barrel Pistol" or tool.Name == "Horse Artillery Pistol") and shots == 0 then
-        task.spawn(performReload, tool, 2)
+        spawn(performReload, tool, 2)
     elseif shots == 0 then
-        task.spawn(performReload, tool, 1)
+        spawn(performReload, tool, 1)
     end
 end
 
@@ -991,7 +924,7 @@ RunService.RenderStepped:Connect(function()
     laser.Transparency = 1 
 end)
 
--- ========== UI 部分（SDGT ELIT 风格，添加枪械分类和移动/玩家内的新功能） ==========
+-- ========== UI 部分（SDGT ELIT 风格） ==========
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SDGT_Elite_Gui"
 ScreenGui.ResetOnSpawn = false
@@ -1093,7 +1026,6 @@ local function updateStatusPanel()
         ["Auto Shoot"]="自动射击", ["Silent Aim"]="静默瞄准", ["Insta Shoot"]="瞬间射击", ["Auto Reload"]="自动装填",
         ["Use FOV"]="使用视野", ["Show FOV"]="显示视野圈", ["Mortar Time"]="迫击炮时机", ["Zombie ESP"]="僵尸透视",
         ["半无敌"]="半无敌", ["飞行绕过"]="飞行绕过", 
-        -- 枪械功能分类中的按钮也会出现在状态栏（可选）
     }
     for i, name in ipairs(activeNames) do
         local display = nameMap[name] or name
@@ -1185,7 +1117,7 @@ local function createTitleBar(parent, text)
     return bar
 end
 
-local function createFeatureButton(parent, internalName, isCategory, clickCallback, isAction, usePurpleHighlight)
+local function createFeatureButton(parent, internalName, isCategory, clickCallback, isAction, usePurple)
     local btn = Instance.new("TextButton")
     local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
     local fontSize = math.floor(BASE_FONT_SIZE * scale)
@@ -1206,8 +1138,7 @@ local function createFeatureButton(parent, internalName, isCategory, clickCallba
         else
             state = not state
             FeatureStates[internalName] = state
-            -- 使用银河紫色高亮
-            local highlightColor = usePurpleHighlight and Color3.fromRGB(150, 0, 255) or TARGET_BLACK
+            local highlightColor = usePurple and Color3.fromRGB(150, 0, 255) or TARGET_BLACK
             TweenService:Create(btn, TweenInfo.new(0.3, Enum.EasingStyle.Back), {BackgroundTransparency = state and 0.6 or 1, BackgroundColor3 = state and highlightColor or Color3.new(0,0,0)}):Play()
             updateStatusPanel()
             if clickCallback then clickCallback(state) end 
@@ -1232,7 +1163,7 @@ local function toggleSubUI(name)
     else table.insert(ActiveSubUIs, target) if MainFrame.Visible then target.Visible = true end end
 end
 
--- 创建子窗口（战斗、视觉效果、移动、玩家、枪械功能、界面设置）
+-- 创建子窗口
 local function createSubWindow(name, items)
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
@@ -1243,7 +1174,6 @@ local function createSubWindow(name, items)
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
     
     if name == "Combat" then
-        -- 原有战斗功能（跳跃攻击、自动面对、刺刀辅助、枪械模组等）保持不变
         local jumpContainer = Instance.new("Frame")
         jumpContainer.Size, jumpContainer.BackgroundTransparency, jumpContainer.ClipsDescendants, jumpContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", jumpContainer).SortOrder = Enum.SortOrder.LayoutOrder
@@ -1292,39 +1222,23 @@ local function createSubWindow(name, items)
     end
     
     if name == "Movement" then
-        -- 添加飞行绕过按钮
-        createFeatureButton(subScroll, "飞行绕过", false, function(s)
-            if s then createFlyUI() end
-        end, false, false)  -- 普通按钮，不需要紫色高亮，但为了统一风格，不加高亮也可
+        createFeatureButton(subScroll, "飞行绕过", false, function(s) if s then createFlyUI() end end, false, false)
     end
     
     if name == "Player" then
-        -- 添加半无敌按钮
-        createFeatureButton(subScroll, "半无敌", false, function(s) CFG.HALF_WUDI_ON = s end, false, true) -- 使用紫色高亮
+        createFeatureButton(subScroll, "半无敌", false, function(s) CFG.HALF_WUDI_ON = s end, false, true)
     end
     
     if name == "Gun" then
-        -- 枪械功能分类（所有开关使用银河紫色高亮）
-        -- 主开关
+        -- 枪械功能按钮（紫色高亮）
         createFeatureButton(subScroll, "自动射击", false, function(s) GUN.AUTO_SHOOT = s end, false, true)
         createFeatureButton(subScroll, "瞬间射击", false, function(s) GUN.INSTANT_SHOOT = s end, false, true)
         createFeatureButton(subScroll, "自动装填", false, function(s) GUN.AUTO_RELOAD = s end, false, true)
         createFeatureButton(subScroll, "墙体检测", false, function(s) GUN.WALL_CHECK = s end, false, true)
         createFeatureButton(subScroll, "使用FOV", false, function(s) GUN.USE_FOV = s end, false, true)
         createFeatureButton(subScroll, "显示FOV圈", false, function(s) GUN.SHOW_FOV = s end, false, true)
-        createFeatureButton(subScroll, "静默瞄准", false, function(s) GUN.SILENT_AIM = s end, false, true)
-        createFeatureButton(subScroll, "静默瞄准保存玩家", false, function(s) GUN.SILENT_AIM_SAVE_PLAYERS = s end, false, true)
-        createFeatureButton(subScroll, "静默瞄准仅炸弹兵近队友", false, function(s) GUN.SILENT_AIM_BOMBER_NEAR = s end, false, true)
-        createFeatureButton(subScroll, "静默瞄准使用FOV", false, function(s) GUN.SILENT_AIM_USE_FOV = s end, false, true)
-        createFeatureButton(subScroll, "自动保存玩家", false, function(s) GUN.AUTO_SAVE_PLAYERS = s end, false, true)
-        createFeatureButton(subScroll, "瞬间保存玩家", false, function(s) GUN.INSTANT_SAVE_PLAYERS = s end, false, true)
-        createFeatureButton(subScroll, "炸弹兵不射近队友", false, function(s) GUN.BOMBER_SAFE_TEAMMATES = s end, false, true)
-        createFeatureButton(subScroll, "炸弹兵不射近自己", false, function(s) GUN.BOMBER_SAFE_SELF = s end, false, true)
-        createFeatureButton(subScroll, "炸弹兵只射近队友", false, function(s) GUN.SHOOT_BOMBER_NEAR_TEAMMATES = s end, false, true)
-        createFeatureButton(subScroll, "目标ESP", false, function(s) GUN.TARGET_ESP = s end, false, true)
-        createFeatureButton(subScroll, "瞄准点", false, function(s) GUN.AIM_DOT = s end, false, true)
         
-        -- 滑块（由于滑块不是按钮，单独创建）
+        -- 滑块
         local function createSlider(parent, title, minVal, maxVal, defaultVal, callback)
             local frame = Instance.new("Frame", parent); frame.Size = UDim2.new(0.95, 0, 0, 40); frame.BackgroundColor3 = Color3.fromRGB(35,35,45); Instance.new("UICorner", frame)
             local label = Instance.new("TextLabel", frame); label.Size = UDim2.new(1,0,0,18); label.BackgroundTransparency = 1; label.Text = title .. ": " .. defaultVal; label.TextColor3 = Color3.new(1,1,1); label.Font = "SourceSansBold"; label.TextSize = 11
@@ -1347,12 +1261,8 @@ local function createSubWindow(name, items)
         createSlider(subScroll, "FOV大小", 10, 120, GUN.FOV_SIZE, function(v) GUN.FOV_SIZE = v end)
         createSlider(subScroll, "预测时间", 0, 1, GUN.PREDICTION, function(v) GUN.PREDICTION = v end)
         createSlider(subScroll, "最大射程", 50, 600, GUN.MAX_RANGE, function(v) GUN.MAX_RANGE = v end)
-        createSlider(subScroll, "静默瞄准FOV", 10, 120, GUN.SILENT_AIM_FOV_SIZE, function(v) GUN.SILENT_AIM_FOV_SIZE = v end)
-        createSlider(subScroll, "保存玩家延迟", 0, 5, GUN.SAVE_PLAYER_DELAY, function(v) GUN.SAVE_PLAYER_DELAY = v end)
-        createSlider(subScroll, "保存玩家范围", 50, 600, GUN.SAVE_PLAYER_RANGE, function(v) GUN.SAVE_PLAYER_RANGE = v end)
-        createSlider(subScroll, "炸弹兵安全半径", 5, 30, GUN.BOMBER_SAFE_RADIUS, function(v) GUN.BOMBER_SAFE_RADIUS = v end)
         
-        -- 目标类型多选（使用普通按钮，但开启时背景色改为紫色）
+        -- 目标类型多选
         local function createTypeSelector(parent, title, types, selectedTable)
             local frame = Instance.new("Frame", parent); frame.Size = UDim2.new(0.95, 0, 0, 30); frame.BackgroundTransparency = 1
             local label = Instance.new("TextLabel", frame); label.Size = UDim2.new(1,0,0,20); label.BackgroundTransparency = 1; label.Text = title; label.TextColor3 = Color3.new(1,1,0.8); label.Font = "SourceSansBold"; label.TextSize = 12
@@ -1376,20 +1286,6 @@ local function createSubWindow(name, items)
         end
         
         createTypeSelector(subScroll, "自动射击目标类型", {"Bomber","Igniter","Zapper","Runner","Cuirassier"}, GUN.SELECTED_SHOOT_TYPES)
-        createTypeSelector(subScroll, "静默瞄准目标类型", {"Bomber","Igniter","Zapper","Runner","Cuirassier"}, GUN.SELECTED_SILENT_AIM_TYPES)
-        
-        -- 保存玩家白名单（简单输入框）
-        local whitelistFrame = Instance.new("Frame", subScroll); whitelistFrame.Size = UDim2.new(0.95, 0, 0, 30); whitelistFrame.BackgroundColor3 = Color3.fromRGB(35,35,45); Instance.new("UICorner", whitelistFrame)
-        local whitelistLabel = Instance.new("TextLabel", whitelistFrame); whitelistLabel.Size = UDim2.new(0.4,0,1,0); whitelistLabel.BackgroundTransparency = 1; whitelistLabel.Text = "保存玩家白名单(逗号分隔):"; whitelistLabel.TextColor3 = Color3.new(1,1,1); whitelistLabel.TextSize = 10
-        local whitelistInput = Instance.new("TextBox", whitelistFrame); whitelistInput.Size = UDim2.new(0.55,0,1,0); whitelistInput.Position = UDim2.new(0.43,0,0,0); whitelistInput.BackgroundColor3 = Color3.fromRGB(50,50,60); whitelistInput.Text = ""; whitelistInput.TextColor3 = Color3.new(1,1,1); whitelistInput.TextSize = 10
-        whitelistInput.FocusLost:Connect(function()
-            local names = {}
-            for _, n in ipairs(string.split(whitelistInput.Text, ",")) do
-                local trimmed = n:gsub("^%s*(.-)%s*$", "%1")
-                if trimmed ~= "" then table.insert(names, trimmed) end
-            end
-            GUN.SAVE_PLAYER_WHITELIST = names
-        end)
     end
     
     for _, v in ipairs(items) do createFeatureButton(subScroll, v, false) end
@@ -1434,7 +1330,7 @@ local function createSettingSub()
     SubUIFrames[name] = sub
 end
 
--- 全图高亮和 LoopSpeed 放在主面板
+-- 主面板上的全图高亮和 LoopSpeed
 createFeatureButton(list, "全图高亮", false, function(s) 
     FULL_BRIGHT_ON = s 
     if not s then 
@@ -1445,7 +1341,6 @@ createFeatureButton(list, "全图高亮", false, function(s)
     end
 end)
 
--- LoopSpeed 滑块（单独构建）
 local speedFrame = Instance.new("Frame", list)
 speedFrame.Size = UDim2.new(0.95, 0, 0, 40)
 speedFrame.BackgroundColor3 = Color3.fromRGB(35,35,45)
@@ -1486,7 +1381,6 @@ authorLabel.TextColor3 = Color3.new(0.6,0.6,0.8)
 authorLabel.Font = "SourceSansItalic"
 authorLabel.TextSize = 12
 
--- 主菜单按钮（S）
 local MainButton = Instance.new("TextButton")
 MainButton.Parent = ScreenGui
 MainButton.BackgroundColor3 = Color3.new(0.04,0.04,0.04)
@@ -1524,5 +1418,16 @@ initResizeLogic()
 updateAllThemes()
 updateFontSizes()
 
--- 确保飞行控制模块预加载（可选）
-task.wait(1)
+-- 确保移速循环（LoopSpeed）生效
+spawn(function()
+    while true do
+        wait()
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = LOOP_SPEED_VAL
+            end
+        end
+    end
+end)
