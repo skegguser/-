@@ -11,577 +11,364 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Camera = workspace:WaitForChild("Camera")
 
-local CFG = {
-    JUMP_ON = false,
-    AUTO_FACE_ON = false,
-    FACE_BOMBER = false,
-    WALL_CHECK = false,
-    SHOW_RANGE = false,
-    LEFT_OFFSET = 11,
-    SCAN_DIST = 25,
-    BAYONET_ON = false,
-    BAYONET_WALL_CHECK = false,
-    BAYONET_SHOW_RANGE = false,
-    BAYONET_FACE_BOMBER = false,
-    BAYONET_RANGE = 25,
-    BAYONET_SMOOTH = 0.15,
-    BAYONET_BASE_HEIGHT = 0.8,
+-- ========== 战斗配置（来自水调歌头） ==========
+local KILLAURA_ON = false
+local AUTO_FACE_ON = false
+local JUMP_SWING_ON = false
+local AUTO_EQUIP_ON = false
+local lastAttackTime = 0
+local currentTarget = nil
+local currentRemote = nil
+local currentConfig = nil
+local EQUIP_RANGE = 30
 
-    AUTO_SHOOT = false,
-    INSTANT_SHOOT = false,
-    AUTO_RELOAD = false,
-    SILENT_AIM = false,
-    SILENT_AIM_SAVE_PLAYERS = false,
-    AUTO_SAVE_PLAYERS = false,
-    INSTANT_SAVE_PLAYERS = false,
-    GUN_WALL_CHECK = true,
-    USE_FOV = false,
-    SHOW_FOV = false,
-    FOV_SIZE = 50,
-    PREDICTION = 0.2,
-    MAX_RANGE = 200,
-    HAND_MORTAR_TIMING = false,
-
-    -- 无敌（碰飞）
-    WUDI_ON = false,
-
-    -- 移动 Speed 模块
-    SPEED_ENABLED = false,
-    SPEED_VALUE = 32,
-    SPRINT_BOOST = false,
-    SPRINT_BOOST_VALUE = 2.0,
+local WEAPON_DB = {
+    ["Stake"] = {range = 13, delay = 0.12, swing = "Over", mult = 12, path = "backpack"},
+    ["Hand Axe"] = {range = 14, delay = 0.10, swing = "Over", mult = 12, path = "workspace"},
+    ["Boarding Axe"] = {range = 15, delay = 0.10, swing = "Over", mult = 15, path = "backpack"},
+    ["Heavy Sabre"] = {range = 15, delay = 0.10, swing = "Thrust", mult = 18, path = "workspace"},
+    ["Sabre"] = {range = 15, delay = 0.10, swing = "Thrust", mult = 18, path = "workspace"},
+    ["Axe"] = {range = 14, delay = 0.10, swing = "Side", mult = 12, path = "workspace"},
+    ["Pickaxe"] = {range = 14, delay = 0.12, swing = "Over", mult = 12, path = "workspace"},
+    ["Spontoon"] = {range = 25, delay = 0.10, swing = "Thrust", mult = 12, path = "backpack"},
+    ["Officer's Sabre"] = {range = 15, delay = 0.10, swing = "Thrust", mult = 15, path = "backpack"}
 }
 
+local ELBOW_CONFIGS = {
+    ["工兵斧"] = {weapon = "Axe", range = 14, delay = 0.10},
+    ["卡宾枪"] = {weapon = "Carbine", range = 14, delay = 0.10}
+}
+local lastElbowTimes = {}
+
+-- ========== 视觉配置（来自水调歌头） ==========
 local activeStates = {}
 local espHighlights = {}
-local persistentBurners = {}
-local currentTarget = nil
 local ALERT_RANGE = 20
-
 local ESP_CONFIGS = {
-    ["Bomber"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Torch", true) end, color = Color3.fromRGB(255, 230, 0), alert = true},
-    ["Cuirassier"] = {check = function(obj) return obj:IsA("Model") and obj.Name == "m_Zombie" and obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(0, 255, 150), alert = false},
-    ["Runner"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("E", true) and not obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(255, 50, 50), alert = false},
-    ["Zapper"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Axe", true) end, color = Color3.fromRGB(50, 150, 255), alert = false},
-    ["Igniter"] = {check = function(obj) 
-        if not obj:IsA("Model") then return false end
-        if persistentBurners[obj] then return true end
-        if obj:FindFirstChild("Whale Oil Lantern", true) then persistentBurners[obj] = true return true end
-        return false
-    end, color = Color3.fromRGB(255, 120, 0), alert = false}
+    ["自爆"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Torch", true) end, color = Color3.fromRGB(255, 255, 0), alert = true},
+    ["二师兄"] = {check = function(obj) return obj:IsA("Model") and obj.Name == "m_Zombie" and obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(0, 255, 100), alert = false},
+    ["红眼"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("E", true) and not obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(255, 0, 0), alert = false},
+    ["大师兄"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Axe", true) end, color = Color3.fromRGB(0, 100, 255), alert = false},
+    ["燃烧者"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Whale Oil Lantern", true) end, color = Color3.fromRGB(255, 69, 0), alert = false}
 }
 
-local BeamFolder = Instance.new("Folder", workspace)
-BeamFolder.Name = "SDGT_Beams"
+-- ========== 移动配置 ==========
+local SPEED_ENABLED = false
+local SPEED_VALUE = 32
+local SPRINT_BOOST = false
+local SPRINT_BOOST_VALUE = 2.0
+local originalWalkSpeed = nil
 
-local function createBeam()
-    local part = Instance.new("Part")
-    part.Name = "SDGT_Laser"
-    part.Anchored = true
-    part.CanCollide = false
-    part.CanTouch = false
-    part.Material = Enum.Material.Neon
-    part.Color = Color3.fromRGB(255, 0, 0)
-    part.Size = Vector3.new(0.05, 0.05, 1)
-    part.Transparency = 1
-    part.Parent = BeamFolder
-    return part
-end
-
-local laser = createBeam()
-local bayonetLaser = createBeam()
-bayonetLaser.Name = "BayonetLaser"
-
-local autoShootCurrentTarget = nil
-local silentAimCurrentTarget = nil
-local fovGui = nil
-local fovCircle = nil
-local reloadInProgress = {}
-local activeConnections = {}
-local watchedTools = {}
-
--- 无敌（碰飞）变量
+-- ========== 无敌（碰飞）配置 ==========
+local WUDI_ON = false
 local wudiTargetPlayer = nil
 local wudiMoveLoopRunning = true
 local wudiPushLoopRunning = true
 
--- 移动模块变量
-local originalWalkSpeed = nil
--- ================= 第2部分：辅助函数、FOV、枪械装填 =================
-local function ensureFovGui()
-    if fovGui and fovGui.Parent then return fovGui, fovCircle end
-    fovGui = Instance.new("ScreenGui", PlayerGui)
-    fovGui.Name = "Gun_FovGui"
-    fovGui.ResetOnSpawn = false
-    
-    local circle = Instance.new("Frame", fovGui)
-    circle.AnchorPoint = Vector2.new(0.5, 0.5)
-    circle.Position = UDim2.new(0.5, 0, 0.5, 0)
-    circle.BackgroundTransparency = 1
-    Instance.new("UICorner", circle).CornerRadius = UDim.new(1, 0)
-    local stroke = Instance.new("UIStroke", circle)
-    stroke.Thickness = 2
-    stroke.Color = Color3.fromRGB(255, 255, 0)
-    stroke.Transparency = 0.2
-    fovCircle = circle
-    return fovGui, fovCircle
-end
+-- ========== 飞行配置 ==========
+local FLY_ENABLED = false
+local FLY_SPEED = 35
+local flyBodyVelocity = nil
+local flyBodyGyro = nil
+local flyAnimCache = nil
+local flyControlModule = nil
+local flyThread = nil
 
-local function getFovScreenCenter()
-    local cam = Workspace.CurrentCamera
-    if not cam then return Vector2.new(0, 0) end
-    if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
-        return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+-- ========== 辅助变量 ==========
+local BeamFolder = Instance.new("Folder", workspace)
+BeamFolder.Name = "SDGT_Beams"
+local laser = nil
+local bayonetLaser = nil  -- 保留但未使用
+local fovGui, fovCircle = nil, nil
+local reloadInProgress = {}
+-- ================= 第2部分：战斗核心函数 =================
+local function isDangerousCore(obj)
+    if not obj or not obj:IsA("Model") then return true end
+    local current = obj
+    while current and current ~= workspace do
+        if current.Name == "m_Zombie" or current:FindFirstChild("Barrel", true) or current.Parent == workspace:FindFirstChild("Camera") then return true end
+        current = current.Parent
     end
-    local mousePos = UserInputService:GetMouseLocation()
-    local inset = GuiService:GetGuiInset()
-    return mousePos - Vector2.new(inset.X, inset.Y)
-end
-
-RunService.RenderStepped:Connect(function()
-    if CFG.SHOW_FOV and (CFG.AUTO_SHOOT or CFG.SILENT_AIM or CFG.AUTO_SAVE_PLAYERS) then
-        local gui, circle = ensureFovGui()
-        gui.Enabled = true
-        local cam = Workspace.CurrentCamera
-        if cam then
-            local sizePx = (math.clamp(CFG.FOV_SIZE, 10, 120) / 40) * 250
-            circle.Size = UDim2.new(0, sizePx, 0, sizePx)
-            local centerVec = getFovScreenCenter()
-            circle.Position = UDim2.new(centerVec.X / cam.ViewportSize.X, 0, centerVec.Y / cam.ViewportSize.Y, 0)
-        end
-    else
-        if fovGui then fovGui.Enabled = false end
-    end
-end)
-
-local function isWorldPosInFov(worldPos)
-    if not CFG.USE_FOV then return true end
-    local cam = Workspace.CurrentCamera
-    if not cam then return true end
-    local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
-    if not onScreen then return false end
-    local centerVec = getFovScreenCenter()
-    local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerVec).Magnitude
-    local sizePx = (math.clamp(CFG.FOV_SIZE, 10, 120) / 40) * 250
-    return dist <= (sizePx / 2)
-end
-
-local function isGun(tool)
-    if not tool or not tool:IsA("Tool") then return false end
-    local animFolder = tool:FindFirstChild("Animations")
-    return animFolder and (animFolder:FindFirstChild("Aim") or animFolder:FindFirstChild("Aiming"))
-end
-
-local function getShotsLoadedForTool(tool)
-    if not tool then return 0 end
-    local s = tool:FindFirstChild("ShotsLoaded")
-    if s and (s:IsA("IntValue") or s:IsA("NumberValue")) then return s.Value end
-    return 0
-end
-
-local function findRemoteForTool(tool)
-    if not tool then return nil end
-    return tool:FindFirstChild("RemoteEvent")
-end
-
-local function hasClearShotOnPart(originPos, aimPart, targetModel)
-    if not CFG.GUN_WALL_CHECK then return true end
-    if not originPos or not aimPart then return false end
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {LocalPlayer.Character, targetModel, BeamFolder}
-    local dir = aimPart.Position - originPos
-    local result = workspace:Raycast(originPos, dir, params)
-    return result == nil
-end
-
-local function getPredictedAimPosition(part)
-    if not part then return nil end
-    local pos = part.Position
-    if CFG.PREDICTION <= 0 then return pos end
-    local vel = part.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
-    return pos + vel * CFG.PREDICTION
-end
-
-local function performReload(tool, targetShots)
-    if reloadInProgress[tool] then return end
-    reloadInProgress[tool] = true
-    local remote = findRemoteForTool(tool)
-    if not remote then reloadInProgress[tool] = nil return end
-    
-    if targetShots > 1 then pcall(function() remote:FireServer("StartReload") end) task.wait(0.1) end
-    
-    local attempts = 0
-    while attempts < 50 do
-        if getShotsLoadedForTool(tool) >= targetShots then
-            pcall(function() tool.Parent = LocalPlayer.Backpack end)
-            task.wait(0.02)
-            pcall(function() tool.Parent = LocalPlayer.Character end)
-            break
-        end
-        pcall(function() remote:FireServer("Reload") end)
-        task.wait(0.05)
-        attempts = attempts + 1
-    end
-    reloadInProgress[tool] = nil
-end
-
-local function tryReloadTool(tool)
-    if not CFG.AUTO_RELOAD or not isGun(tool) then return end
-    local shots = getShotsLoadedForTool(tool)
-    if tool.Name == "Nock Gun" and shots < 7 then
-        task.spawn(performReload, tool, 7)
-    elseif (tool.Name == "Double Barrel Pistol" or tool.Name == "Horse Artillery Pistol") and shots == 0 then
-        task.spawn(performReload, tool, 2)
-    elseif shots == 0 then
-        task.spawn(performReload, tool, 1)
-    end
-end
-
-local function getNearestZombie(range)
-    local cam = Workspace.CurrentCamera
-    local originPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and LocalPlayer.Character.Head.Position or cam.CFrame.Position
-    if not originPos then return nil end
-
-    local bestPart, bestModel, bestDist = nil, nil, range
-    local zombiesFolder = Workspace:FindFirstChild("Zombies")
-    if not zombiesFolder then return nil end
-
-    for _, model in ipairs(zombiesFolder:GetDescendants()) do
-        if model:IsA("Model") and not model:FindFirstChild("Spawn") then
-            local hum = model:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local aimPart = model:FindFirstChild("Head") or model:FindFirstChild("HumanoidRootPart")
-                if aimPart then
-                    local aimPos = getPredictedAimPosition(aimPart)
-                    if isWorldPosInFov(aimPos) then
-                        local d = (aimPos - originPos).Magnitude
-                        if d <= bestDist and hasClearShotOnPart(originPos, aimPart, model) then
-                            bestPart, bestModel, bestDist = aimPart, model, d
-                        end
-                    end
-                end
+    local cam = workspace:FindFirstChild("Camera")
+    if cam then
+        for _, b in ipairs(cam:GetChildren()) do
+            if b.Name == "m_Zombie" and b:FindFirstChild("Barrel", true) then
+                local bRoot = b:FindFirstChild("HumanoidRootPart") or b:FindFirstChild("Torso")
+                local objPos = (obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso") or {Position = Vector3.new(9e9,9e9,9e9)}).Position
+                if bRoot and (bRoot.Position - objPos).Magnitude < 4 then return true end
             end
         end
     end
-    return bestPart, bestModel
-end
-
-RunService.Heartbeat:Connect(function()
-    if CFG.SILENT_AIM or CFG.SILENT_AIM_SAVE_PLAYERS then
-        local targetPart, targetModel = getNearestZombie(CFG.MAX_RANGE)
-        silentAimCurrentTarget = targetPart
-    else
-        silentAimCurrentTarget = nil
-    end
-
-    if CFG.AUTO_SHOOT or CFG.AUTO_SAVE_PLAYERS then
-        local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
-        if tool and isGun(tool) and getShotsLoadedForTool(tool) > 0 then
-            local targetPart, targetModel = getNearestZombie(CFG.MAX_RANGE)
-            if targetPart then
-                autoShootCurrentTarget = targetPart
-                local aimPos = CFG.INSTANT_SHOOT and targetPart.Position or getPredictedAimPosition(targetPart)
-                local remote = findRemoteForTool(tool)
-                if remote then
-                    local modelRef = LocalPlayer.Character:FindFirstChild("Model") or LocalPlayer.Character
-                    pcall(function() remote:FireServer("Fire", modelRef, aimPos, Workspace:GetServerTimeNow()) end)
-                end
-            else
-                autoShootCurrentTarget = nil
-            end
-        end
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function(char)
-    char.ChildAdded:Connect(function(child)
-        if child:IsA("Tool") and isGun(child) then
-            pcall(tryReloadTool, child)
-            child.Equipped:Connect(function() pcall(tryReloadTool, child) end)
-        end
-    end)
-end)
--- ================= 第3部分：刺刀辅助、自动面向核心、ESP 创建 =================
-local function getBayonetDynamicHeight(distance)
-    local optimalDist = 12
-    local dropScale = 140
-    local dynamic = CFG.BAYONET_BASE_HEIGHT - ((distance - optimalDist)^2 / dropScale)
-    return math.clamp(dynamic, 0.2, CFG.BAYONET_BASE_HEIGHT)
-end
-
-local function isBayonetBehindWall(targetPart)
-    local char = LocalPlayer.Character
-    if not char or not targetPart then return true end
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterDescendantsInstances = {char, workspace:FindFirstChild("Zombies"), workspace:FindFirstChild("Camera"), BeamFolder}
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    local origin = Camera.CFrame.Position
-    local direction = targetPart.Position - origin
-    local raycastResult = workspace:Raycast(origin, direction, raycastParams)
-    return raycastResult ~= nil
-end
-
-local function getDangerZones()
-    local zones = {}
-    for _, model in ipairs(workspace:GetChildren()) do
-        if model:IsA("Model") and (model.Name:find("Bomber") or model:FindFirstChild("Barrel")) then
-            local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Barrel")
-            if root then table.insert(zones, root.Position) end
-        end
-    end
-    local camFolder = workspace:FindFirstChild("Camera")
-    if camFolder then
-        for _, m in ipairs(camFolder:GetChildren()) do
-            if m.Name:find("Bomber") or m:FindFirstChild("Barrel") then
-                local r = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Barrel")
-                if r then table.insert(zones, r.Position) end
-            end
-        end
-    end
-    return zones
-end
-
-local function getBayonetTarget()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil, 0 end
-    local closest, minDist = nil, CFG.BAYONET_RANGE
-    local dangerZones = {}
-    if not CFG.BAYONET_FACE_BOMBER then
-        local folders = {workspace, workspace:FindFirstChild("Camera")}
-        for _, f in pairs(folders) do
-            if f then
-                for _, m in ipairs(f:GetChildren()) do
-                    if m:IsA("Model") and (m.Name:find("Bomber") or m:FindFirstChild("Barrel")) then
-                        local p = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Barrel")
-                        if p then table.insert(dangerZones, p.Position) end
-                    end
-                end
-            end
-        end
-    end
-    local targetFolders = {workspace:FindFirstChild("Zombies"), workspace:FindFirstChild("Camera")}
-    for _, f in pairs(targetFolders) do
-        if f then
-            for _, z in ipairs(f:GetChildren()) do
-                if z:IsA("Model") then
-                    local head = z:FindFirstChild("Head")
-                    local hum = z:FindFirstChildOfClass("Humanoid")
-                    if head and hum and hum.Health > 0 then
-                        local d = (hrp.Position - head.Position).Magnitude
-                        if d < minDist then
-                            local safe = true
-                            for _, bPos in ipairs(dangerZones) do
-                                if (head.Position - bPos).Magnitude < 6 then safe = false break end
-                            end
-                            local wallBlock = false
-                            if CFG.BAYONET_WALL_CHECK then wallBlock = isBayonetBehindWall(head) end
-                            if safe and not wallBlock then closest, minDist = head, d end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return closest, minDist
-end
-
-RunService.RenderStepped:Connect(function()
-    if CFG.BAYONET_ON then
-        local target, dist = getBayonetTarget()
-        if CFG.BAYONET_SHOW_RANGE and target then
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local dHeight = getBayonetDynamicHeight(dist)
-                local targetPos = target.Position + Vector3.new(0, dHeight, 0)
-                local distance = (hrp.Position - targetPos).Magnitude
-                bayonetLaser.Size = Vector3.new(0.05, 0.05, distance)
-                bayonetLaser.CFrame = CFrame.new(hrp.Position:Lerp(targetPos, 0.5), targetPos)
-                bayonetLaser.Transparency = 0.4
-                bayonetLaser.Color = Color3.fromRGB(0, 255, 255)
-            else bayonetLaser.Transparency = 1 end
-        else bayonetLaser.Transparency = 1 end
-        if target then
-            local dHeight = getBayonetDynamicHeight(dist)
-            local targetPos = target.Position + Vector3.new(0, dHeight, 0)
-            local targetCF = CFrame.new(Camera.CFrame.Position, targetPos)
-            Camera.CFrame = Camera.CFrame:Lerp(targetCF, CFG.BAYONET_SMOOTH)
-        end
-    else bayonetLaser.Transparency = 1 end
-end)
-
-local function isBehindWall(targetPart)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp or not targetPart then return true end
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterDescendantsInstances = {char, workspace:FindFirstChild("Zombies"), workspace:FindFirstChild("Camera"), BeamFolder}
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    local origin = hrp.Position
-    local direction = targetPart.Position - origin
-    local raycastResult = workspace:Raycast(origin, direction, raycastParams)
-    return raycastResult ~= nil
+    return false
 end
 
 local function scanTarget()
+    if not KILLAURA_ON then currentTarget = nil return end
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local closest, minDist = nil, 25
+    local folders = {workspace:FindFirstChild("Zombies"), workspace:FindFirstChild("Camera")}
+    for _, f in pairs(folders) do if f then for _, z in ipairs(f:GetChildren()) do
+        if z:IsA("Model") and not isDangerousCore(z) then
+            local zr = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso")
+            local hum = z:FindFirstChildOfClass("Humanoid")
+            if zr and hum and hum.Health > 0 then 
+                local d = (hrp.Position - zr.Position).Magnitude 
+                if d < minDist then closest, minDist = z, d end 
+            end
+        end
+    end end end
+    currentTarget = closest
+end
+
+local function autoEquipWeapon()
+    if not AUTO_EQUIP_ON then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    local closest, minDist = nil, CFG.SCAN_DIST
-    local dangerZones = getDangerZones()
-    local folders = {workspace:FindFirstChild("Zombies"), workspace:FindFirstChild("Camera")}
-    for _, f in pairs(folders) do 
-        if f then 
-            for _, z in ipairs(f:GetChildren()) do
-                if z:IsA("Model") then
-                    local zr = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso")
-                    local hum = z:FindFirstChildOfClass("Humanoid")
-                    if zr and hum and hum.Health > 0 then
-                        local isTooCloseToBarrel = false
-                        if not CFG.FACE_BOMBER then 
-                            for _, barrelPos in ipairs(dangerZones) do
-                                if (zr.Position - barrelPos).Magnitude < 5 then isTooCloseToBarrel = true break end
-                            end
-                        end
-                        local wallBlock = false
-                        if CFG.WALL_CHECK then if isBehindWall(zr) then wallBlock = true end end
-                        if not isTooCloseToBarrel and not wallBlock then
-                            local d = (hrp.Position - zr.Position).Magnitude 
-                            if d < minDist then closest, minDist = z, d end 
-                        end
+    if char:FindFirstChildOfClass("Tool") then return end
+    local zombieNearby = false
+    local zombies = workspace:FindFirstChild("Zombies")
+    if zombies then
+        for _, z in ipairs(zombies:GetChildren()) do
+            if z:IsA("Model") and not isDangerousCore(z) then
+                local zRoot = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso")
+                local hum = z:FindFirstChildOfClass("Humanoid")
+                if zRoot and hum and hum.Health > 0 then
+                    local dist = (hrp.Position - zRoot.Position).Magnitude
+                    if dist <= EQUIP_RANGE then zombieNearby = true; break end
+                end
+            end
+        end
+    end
+    if zombieNearby then
+        for name, _ in pairs(WEAPON_DB) do
+            local tool = LocalPlayer.Backpack:FindFirstChild(name)
+            if tool then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then hum:EquipTool(tool); break end
+            end
+        end
+    end
+end
+
+local function getElbowRemote(weaponName)
+    local tool = LocalPlayer.Backpack:FindFirstChild(weaponName) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(weaponName))
+    return tool and tool:FindFirstChild("RemoteEvent")
+end
+
+local function findElbowTarget(range)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local zombies = workspace:FindFirstChild("Zombies")
+    if not hrp or not zombies then return nil end
+    local closest, dist = nil, range
+    for _, z in pairs(zombies:GetChildren()) do
+        if z:IsA("Model") and not z:FindFirstChild("Barrel", true) and z.Name ~= "m_Zombie" then
+            local zHrp = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso")
+            local hum = z:FindFirstChildOfClass("Humanoid")
+            if zHrp and hum and hum.Health > 0 then
+                local d = (hrp.Position - zHrp.Position).Magnitude
+                if d < dist then closest = z; dist = d end
+            end
+        end
+    end
+    return closest
+end
+
+local function attackElbow(target, weaponType, lastTime, delay)
+    local now = tick()
+    if now - lastTime < delay then return lastTime end
+    local remote = getElbowRemote(weaponType == "工兵斧" and "Axe" or "Carbine")
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local tRoot = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
+    if not remote or not root or not tRoot then return lastTime end
+    pcall(function()
+        if weaponType == "工兵斧" then
+            remote:FireServer("Equip", root)
+            remote:FireServer("BraceBlock")
+            remote:FireServer("FeedbackStun", target, tRoot.Position)
+            remote:FireServer("StopBraceBlock")
+        else
+            remote:FireServer("Shove")
+            remote:FireServer("FeedbackStun", target, tRoot.Position)
+        end
+    end)
+    return now
+end
+
+-- 挥刀跳 Hook 处理（在后面的 Hook 中实现）
+local function handleJumpSwing()
+    if not JUMP_SWING_ON then return end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.FloorMaterial ~= Enum.Material.Air then
+        hum.Jump = true
+    end
+end
+
+-- 攻击主循环
+task.spawn(function()
+    while true do
+        if KILLAURA_ON then
+            scanTarget()
+            autoEquipWeapon()
+            local char = LocalPlayer.Character
+            if char then
+                local tool = char:FindFirstChildOfClass("Tool")
+                if tool and WEAPON_DB[tool.Name] then
+                    currentRemote = tool:FindFirstChild("RemoteEvent")
+                    currentConfig = WEAPON_DB[tool.Name]
+                end
+            end
+            if currentTarget and currentRemote and currentConfig then
+                local now = tick()
+                if now - lastAttackTime >= currentConfig.delay then
+                    local head = currentTarget:FindFirstChild("Head") or currentTarget:FindFirstChild("HumanoidRootPart")
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if head and hrp then
+                        local dir = (head.Position - hrp.Position).Unit
+                        pcall(function()
+                            currentRemote:FireServer("Swing", currentConfig.swing)
+                            currentRemote:FireServer("HitZombie", currentTarget, head.Position, true, dir * 15, "Head", dir)
+                        end)
+                        lastAttackTime = now
                     end
                 end
-            end 
-        end 
+            end
+            -- 肘击
+            for weaponType, config in pairs(ELBOW_CONFIGS) do
+                if activeStates["肘击_" .. weaponType] then
+                    local target = findElbowTarget(config.range)
+                    if target then
+                        lastElbowTimes[weaponType] = attackElbow(target, weaponType, lastElbowTimes[weaponType] or 0, config.delay)
+                    end
+                end
+            end
+            -- 自动面向
+            if AUTO_FACE_ON and currentTarget then
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                local tRoot = currentTarget:FindFirstChild("HumanoidRootPart") or currentTarget:FindFirstChild("Torso")
+                if hrp and tRoot then
+                    hrp.CFrame = CFrame.new(hrp.Position, Vector3.new(tRoot.Position.X, hrp.Position.Y, tRoot.Position.Z))
+                end
+            end
+        end
+        task.wait(0.1)
     end
-    currentTarget = closest
-end
+end)
+-- ================= 第3部分：视觉 ESP =================
+local FULL_BRIGHT_ON = false
+local origAmbient = Lighting.Ambient
+local origOutdoorAmbient = Lighting.OutdoorAmbient
+local origBrightness = Lighting.Brightness
+local origClockTime = Lighting.ClockTime
 
 local function createESP(model, color, label)
     if espHighlights[model] then return end
     local torso = model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
     if not torso then return end
     local hl = Instance.new("Highlight", model)
-    hl.FillColor, hl.OutlineColor, hl.FillTransparency, hl.OutlineTransparency, hl.DepthMode = color, Color3.new(1,1,1), 0.6, 0.2, Enum.HighlightDepthMode.AlwaysOnTop
+    hl.FillColor, hl.OutlineColor = color, Color3.new(1,1,1)
+    hl.FillTransparency = 0.4
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     local bgui = Instance.new("BillboardGui", torso)
-    bgui.Size, bgui.AlwaysOnTop, bgui.StudsOffset = UDim2.new(0, 100, 0, 40), true, Vector3.new(0, 3.5, 0)
+    bgui.Size, bgui.AlwaysOnTop, bgui.StudsOffset = UDim2.new(0,80,0,30), true, Vector3.new(0,3,0)
     local tl = Instance.new("TextLabel", bgui)
-    tl.BackgroundTransparency, tl.Size, tl.Text, tl.TextColor3, tl.TextStrokeTransparency, tl.TextSize, tl.Font = 1, UDim2.new(1, 0, 1, 0), "[ " .. label .. " ]", color, 0.5, 13, Enum.Font.GothamBold
+    tl.BackgroundTransparency, tl.Size, tl.Text = 1, UDim2.new(1,0,1,0), label
+    tl.TextColor3, tl.TextStrokeTransparency, tl.TextSize, tl.Font = color, 0, 14, Enum.Font.SourceSansBold
     espHighlights[model] = {hl = hl, gui = bgui}
 end
 
-RunService.Heartbeat:Connect(function()
-    local anyNear, currentTargets = false, {}
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    
-    for _, obj in ipairs(Camera:GetChildren()) do
-        for name, config in pairs(ESP_CONFIGS) do
-            if activeStates[name] and config.check(obj) then
-                currentTargets[obj] = true
-                createESP(obj, config.color, name)
-                if config.alert and activeStates["BomberAlert"] and root then
-                    local t = obj:FindFirstChild("Torso") or obj:FindFirstChild("HumanoidRootPart")
-                    if t and (root.Position - t.Position).Magnitude <= ALERT_RANGE then anyNear = true end
-                end
-                break
-            end
-        end
-    end
-    
-    for m, d in pairs(espHighlights) do 
-        if not currentTargets[m] or not m:IsDescendantOf(workspace) then 
-            if d.hl then d.hl:Destroy() end
-            if d.gui then d.gui:Destroy() end
-            espHighlights[m] = nil
-            persistentBurners[m] = nil
-        end 
-    end
+local alertFrame = nil  -- 稍后在 UI 中创建
 
-    if not CFG.AUTO_FACE_ON then currentTarget = nil return end
-    scanTarget()
-    if currentTarget then
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        local tPart = currentTarget:FindFirstChild("Head") or currentTarget:FindFirstChild("HumanoidRootPart")
-        if hrp and tPart then
-            if not CFG.FACE_BOMBER then
-                local zones = getDangerZones()
-                for _, bPos in ipairs(zones) do if (tPart.Position - bPos).Magnitude < 6 then return end end
-            end
-            local baseLookAt = CFrame.new(hrp.Position, Vector3.new(tPart.Position.X, hrp.Position.Y, tPart.Position.Z))
-            hrp.CFrame = baseLookAt * CFrame.Angles(0, math.rad(CFG.LEFT_OFFSET), 0)
+-- ESP 更新循环
+task.spawn(function()
+    while true do
+        if FULL_BRIGHT_ON then
+            Lighting.Ambient = Color3.new(1,1,1)
+            Lighting.OutdoorAmbient = Color3.new(1,1,1)
+            Lighting.Brightness = 2
+            Lighting.ClockTime = 14
+        else
+            Lighting.Ambient = origAmbient
+            Lighting.OutdoorAmbient = origOutdoorAmbient
+            Lighting.Brightness = origBrightness
+            Lighting.ClockTime = origClockTime
         end
-    end
-end)
 
-RunService.RenderStepped:Connect(function()
-    if CFG.SHOW_RANGE and CFG.AUTO_FACE_ON and currentTarget then
+        local anyNear = false
+        local currentTargets = {}
         local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        local tPart = currentTarget:FindFirstChild("HumanoidRootPart") or currentTarget:FindFirstChild("Head")
-        if hrp and tPart then
-            local dist = (hrp.Position - tPart.Position).Magnitude
-            laser.Size = Vector3.new(0.05, 0.05, dist)
-            laser.CFrame = CFrame.new(hrp.Position:Lerp(tPart.Position, 0.5), tPart.Position)
-            laser.Transparency = 0.4
-            return
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        for _, obj in ipairs(Camera:GetChildren()) do
+            for name, config in pairs(ESP_CONFIGS) do
+                if activeStates[name] and config.check(obj) then
+                    currentTargets[obj] = true
+                    createESP(obj, config.color, name)
+                    if config.alert and activeStates["自爆提醒"] and root then
+                        local t = obj:FindFirstChild("Torso") or obj:FindFirstChild("HumanoidRootPart")
+                        if t and (root.Position - t.Position).Magnitude <= ALERT_RANGE then anyNear = true end
+                    end
+                    break
+                end
+            end
         end
+        if alertFrame then alertFrame.Visible = anyNear end
+        for m, d in pairs(espHighlights) do
+            if not currentTargets[m] or not m:IsDescendantOf(workspace) then
+                if d.hl then d.hl:Destroy() end
+                if d.gui then d.gui:Destroy() end
+                espHighlights[m] = nil
+            end
+        end
+        task.wait(0.1)
     end
-    laser.Transparency = 1 
 end)
--- ================= 第4部分：Hook、无敌（碰飞）、移动 Speed 核心循环 =================
-local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-    local method = getnamecallmethod()
-    local args = {...}
-    
-    if CFG.JUMP_ON and method == "FireServer" and tostring(self) == "RemoteEvent" then
-        if args[1] == "Swing" or args[1] == "Thrust" then
-            task.defer(function()
-                local char = LocalPlayer.Character
-                local hum = char and char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.FloorMaterial ~= Enum.Material.Air then hum.Jump = true end
-            end)
+-- ================= 第4部分：移动 Speed =================
+task.spawn(function()
+    while true do
+        task.wait()
+        local char = LocalPlayer.Character
+        if not char then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then continue end
+        if originalWalkSpeed == nil then originalWalkSpeed = hum.WalkSpeed end
+        if SPEED_ENABLED then
+            hum.WalkSpeed = SPEED_VALUE
+        elseif SPRINT_BOOST then
+            local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+            if shift and hum.FloorMaterial ~= Enum.Material.Air then
+                hum.WalkSpeed = originalWalkSpeed * SPRINT_BOOST_VALUE
+            else
+                hum.WalkSpeed = originalWalkSpeed
+            end
+        else
+            hum.WalkSpeed = originalWalkSpeed
         end
     end
-
-    if CFG.SILENT_AIM and method == "Raycast" and (self == Workspace or self.ClassName == "Workspace") then
-        if not checkcaller() and silentAimCurrentTarget then
-            local origin = args[1]
-            local aimPos = silentAimCurrentTarget.Position
-            local dir = (aimPos - origin)
-            args[2] = dir.Unit * (dir.Magnitude + 10)
-            return oldNamecall(self, unpack(args))
-        end
-    end
-
-    return oldNamecall(self, ...)
-end)
-
-local oldIndex
-oldIndex = hookmetamethod(game, "__index", function(self, index)
-    if CFG.SILENT_AIM and self == LocalPlayer:GetMouse() and (index == "Hit" or index == "Target") then
-        if not checkcaller() and silentAimCurrentTarget then
-            return index == "Hit" and silentAimCurrentTarget.CFrame or silentAimCurrentTarget
-        end
-    end
-    return oldIndex(self, index)
 end)
 
--- ================= 无敌（碰飞）功能 =================
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if SPEED_ENABLED then hum.WalkSpeed = SPEED_VALUE
+        elseif SPRINT_BOOST then hum.WalkSpeed = originalWalkSpeed or 16
+        else hum.WalkSpeed = originalWalkSpeed or 16 end
+    end
+end)
+
+-- ================= 无敌（碰飞） =================
 local function findPlayer(text)
     text = text:lower()
     for _, plr in pairs(Players:GetPlayers()) do
-        if plr.Name:lower():find(text) or plr.DisplayName:lower():find(text) then
-            return plr
-        end
+        if plr.Name:lower():find(text) or plr.DisplayName:lower():find(text) then return plr end
     end
 end
 
 LocalPlayer.Chatted:Connect(function(msg)
-    if not CFG.WUDI_ON then return end
+    if not WUDI_ON then return end
     if msg:sub(1,6):lower() == ";kill " then
         local name = msg:sub(7)
         local plr = findPlayer(name)
@@ -594,7 +381,7 @@ end)
 task.spawn(function()
     while wudiMoveLoopRunning do
         task.wait()
-        if not CFG.WUDI_ON or not wudiTargetPlayer then
+        if not WUDI_ON or not wudiTargetPlayer then
             local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
             if hum then hum:Move(Vector3.zero) end
             continue
@@ -606,13 +393,13 @@ task.spawn(function()
         end
         local myChar = LocalPlayer.Character
         local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        local targetHRP = char:FindFirstChild("HumanoidRootPart")
-        if myHRP and targetHRP then
-            local offset = targetHRP.Velocity.Magnitude < 0.1 and 0 or 7
-            local goal = targetHRP.CFrame * CFrame.new(0,0,-offset) * CFrame.Angles(0, math.rad(-3), 0)
+        local tHRP = char:FindFirstChild("HumanoidRootPart")
+        if myHRP and tHRP then
+            local off = tHRP.Velocity.Magnitude < 0.1 and 0 or 7
+            local goal = tHRP.CFrame * CFrame.new(0,0,-off) * CFrame.Angles(0, math.rad(-3), 0)
             myHRP.CFrame = myHRP.CFrame:Lerp(goal, 0.4)
-            myHRP.Velocity = Vector3.new(0,0,0)
-            myHRP.RotVelocity = Vector3.new(0,0,0)
+            myHRP.Velocity = Vector3.zero
+            myHRP.RotVelocity = Vector3.zero
         end
     end
 end)
@@ -620,58 +407,109 @@ end)
 task.spawn(function()
     while wudiPushLoopRunning do
         task.wait()
-        if not CFG.WUDI_ON then
+        if not WUDI_ON then
             local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
             if hum then hum:Move(Vector3.zero) end
             continue
         end
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-        if hum then
-            hum:Move(Vector3.one * 1e31)
-        end
+        if hum then hum:Move(Vector3.one * 1e31) end
     end
 end)
 
--- ================= 移动 Speed 核心循环 =================
-task.spawn(function()
-    while true do
-        task.wait()
-        local char = LocalPlayer.Character
-        if not char then continue end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum then continue end
-        if originalWalkSpeed == nil then
-            originalWalkSpeed = hum.WalkSpeed
-        end
-        if CFG.SPEED_ENABLED then
-            hum.WalkSpeed = CFG.SPEED_VALUE
-        elseif CFG.SPRINT_BOOST then
-            local isSprinting = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-            if isSprinting and hum.FloorMaterial ~= Enum.Material.Air then
-                hum.WalkSpeed = originalWalkSpeed * CFG.SPRINT_BOOST_VALUE
-            else
-                hum.WalkSpeed = originalWalkSpeed
+-- ================= 丝滑飞行 =================
+-- 拦截摔伤
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    if method == "FireServer" and tostring(self) == "ForceSelfDamage" then
+        return nil
+    end
+    return oldNamecall(self, ...)
+end)
+setreadonly(mt, true)
+
+local function getControlModule()
+    if flyControlModule then return flyControlModule end
+    local success, module = pcall(function()
+        return require(LocalPlayer.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
+    end)
+    if success then flyControlModule = module; return module end
+    return nil
+end
+
+local function startFly()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not hrp or not hum then return end
+    local animate = char:FindFirstChild("Animate")
+    if animate then flyAnimCache = animate; animate.Parent = nil end
+    flyBodyVelocity = Instance.new("BodyVelocity")
+    flyBodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+    flyBodyVelocity.Parent = hrp
+    flyBodyGyro = Instance.new("BodyGyro")
+    flyBodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+    flyBodyGyro.P = 8000
+    flyBodyGyro.Parent = hrp
+    flyThread = task.spawn(function()
+        local ctrl = getControlModule()
+        while FLY_ENABLED and char and char.Parent do
+            if ctrl then
+                local moveVec = ctrl:GetMoveVector()
+                local camCF = Camera.CFrame
+                local moveDir = (camCF.LookVector * -moveVec.Z) + (camCF.RightVector * moveVec.X)
+                if moveVec.Magnitude > 0 then
+                    flyBodyVelocity.Velocity = moveDir.Unit * FLY_SPEED
+                    flyBodyGyro.CFrame = CFrame.new(Vector3.zero, moveDir)
+                else
+                    flyBodyVelocity.Velocity = Vector3.new(0, 0.01, 0)
+                    flyBodyGyro.CFrame = CFrame.new(Vector3.zero, Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z))
+                end
+                hum:ChangeState(Enum.HumanoidStateType.Climbing)
             end
-        else
-            hum.WalkSpeed = originalWalkSpeed
+            RunService.RenderStepped:Wait()
         end
+        if flyBodyVelocity then flyBodyVelocity:Destroy(); flyBodyVelocity = nil end
+        if flyBodyGyro then flyBodyGyro:Destroy(); flyBodyGyro = nil end
+        if flyAnimCache then flyAnimCache.Parent = char; flyAnimCache = nil end
+        if hum and hum:GetState() == Enum.HumanoidStateType.Climbing then
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end)
+end
+
+local function stopFly()
+    if flyThread then task.cancel(flyThread); flyThread = nil end
+    if flyBodyVelocity then flyBodyVelocity:Destroy(); flyBodyVelocity = nil end
+    if flyBodyGyro then flyBodyGyro:Destroy(); flyBodyGyro = nil end
+    if flyAnimCache and LocalPlayer.Character then
+        flyAnimCache.Parent = LocalPlayer.Character
+        flyAnimCache = nil
+    end
+    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+    if hum and hum:GetState() == Enum.HumanoidStateType.Climbing then
+        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end
+end
+
+local function onFlyToggled()
+    if FLY_ENABLED then startFly() else stopFly() end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.2)
+    if FLY_ENABLED then
+        stopFly()
+        startFly()
     end
 end)
 
--- 角色重生时重置移速
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        if CFG.SPEED_ENABLED then
-            hum.WalkSpeed = CFG.SPEED_VALUE
-        elseif CFG.SPRINT_BOOST then
-            hum.WalkSpeed = originalWalkSpeed or 16
-        else
-            hum.WalkSpeed = originalWalkSpeed or 16
-        end
-    end
-end)
+task.wait(1)
+getControlModule()
 -- ================= 第5部分：UI 核心框架 =================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SDGT_Elite_Gui"
@@ -705,6 +543,16 @@ local StatusPanel = Instance.new("Frame")
 StatusPanel.Size, StatusPanel.Position, StatusPanel.AnchorPoint, StatusPanel.BackgroundTransparency, StatusPanel.Parent = UDim2.new(0, 150, 0, 0), UDim2.new(1, -5, 0, 5), Vector2.new(1, 0), 1, ScreenGui
 local StatusList = Instance.new("UIListLayout")
 StatusList.Parent, StatusList.HorizontalAlignment, StatusList.SortOrder, StatusList.Padding = StatusPanel, Enum.HorizontalAlignment.Right, Enum.SortOrder.LayoutOrder, UDim.new(0, 2)
+
+-- 自爆警报框
+alertFrame = Instance.new("Frame", ScreenGui)
+alertFrame.Size = UDim2.new(0, 120, 0, 26)
+alertFrame.Position = UDim2.new(0.5, -60, 0.05, 0)
+alertFrame.BackgroundColor3 = Color3.new(0,0,0)
+alertFrame.Visible = false
+Instance.new("UIStroke", alertFrame).Color = Color3.new(1,0,0)
+local aText = Instance.new("TextLabel", alertFrame)
+aText.Size, aText.Text, aText.TextColor3, aText.BackgroundTransparency = UDim2.new(1,0,1,0), "⚠️ 自爆靠近! ⚠️", Color3.new(1,1,1), 1
 
 local function getThemeTextColor()
     if ForcedTextColor then return ForcedTextColor end
@@ -770,7 +618,6 @@ local function updateStatusPanel()
     local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
     local titleSize = math.floor(12 * scale)
     local textSize = math.floor(10 * scale)
-    
     local header = Instance.new("TextLabel")
     header.Size, header.AutomaticSize, header.BackgroundTransparency, header.BackgroundColor3, header.BorderSizePixel, header.Text, header.Font, header.TextSize, header.TextColor3, header.TextXAlignment, header.LayoutOrder, header.Parent = UDim2.new(0, 0, 0, 16), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, "SDGT ELIT  ", Enum.Font.GothamBold, titleSize, Color3.new(1,1,1), Enum.TextXAlignment.Right, -1, StatusPanel
     applyDreamyGradient(header)
@@ -778,11 +625,10 @@ local function updateStatusPanel()
     for name, state in pairs(FeatureStates) do if state then table.insert(activeNames, name) end end
     table.sort(activeNames, function(a, b) return #(a .. "  ") > #(b .. "  ") end)
     local nameMap = {
-        ["Swing Jump"]="跳跃攻击", ["Auto Face"]="自动面对", ["Face Bomber"]="面对炸弹兵", ["Wall Check"]="墙体检测",
-        ["Show Range"]="显示范围", ["Bayonet Assist"]="刺刀辅助", ["Aim Bomber"]="瞄准炸弹兵", ["Gun Mods"]="枪械模组",
-        ["Auto Shoot"]="自动射击", ["Silent Aim"]="静默瞄准", ["Insta Shoot"]="瞬间射击", ["Auto Reload"]="自动装填",
-        ["Use FOV"]="使用视野", ["Show FOV"]="显示视野圈", ["Mortar Time"]="迫击炮时机", ["Zombie ESP"]="僵尸透视",
-        ["无敌"]="无敌(碰飞)", ["Speed 增强"]="Speed增强", ["疾跑增强"]="疾跑增强"
+        ["核心杀戮"]="核心杀戮", ["自动朝向"]="自动朝向", ["挥刀跳"]="挥刀跳", ["自动装备"]="自动装备",
+        ["肘击_工兵斧"]="肘击(工兵斧)", ["肘击_卡宾枪"]="肘击(卡宾枪)", ["全图高亮"]="全图高亮",
+        ["自爆"]="自爆", ["二师兄"]="二师兄", ["红眼"]="红眼", ["大师兄"]="大师兄", ["燃烧者"]="燃烧者", ["自爆提醒"]="自爆提醒",
+        ["Speed 增强"]="Speed增强", ["疾跑增强"]="疾跑增强", ["无敌"]="无敌(碰飞)", ["丝滑飞行"]="丝滑飞行"
     }
     for i, name in ipairs(activeNames) do
         local display = nameMap[name] or name
@@ -921,103 +767,57 @@ end
 local function createSubWindow(name, items)
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
-    local titleMap = {Combat="战斗", Movement="移动", Visuals="视觉效果", Player="玩家"}
+    local titleMap = {Combat="战斗", Visuals="视觉效果", Movement="移动", Player="玩家"}
     local subTitle = createTitleBar(sub, titleMap[name] or name)
     local subScroll = Instance.new("ScrollingFrame")
     subScroll.Size, subScroll.Position, subScroll.BackgroundTransparency, subScroll.ScrollBarThickness, subScroll.Parent = UDim2.new(1, 0, 1, -BAR_HEIGHT), UDim2.new(0, 0, 0, BAR_HEIGHT), 1, 0, sub
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
     
     if name == "Combat" then
-        local jumpContainer = Instance.new("Frame")
-        jumpContainer.Size, jumpContainer.BackgroundTransparency, jumpContainer.ClipsDescendants, jumpContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
-        Instance.new("UIListLayout", jumpContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local swingBtn = createFeatureButton(subScroll, "Swing Jump", false, function() local s = FeatureStates["Swing Jump"] CFG.JUMP_ON = s TweenService:Create(jumpContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 150) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        swingBtn.Text = "跳跃攻击"
-        local autoFaceBtn = createFeatureButton(jumpContainer, "Auto Face", true, function() CFG.AUTO_FACE_ON = CategoryStates["Auto Face"] end)
-        autoFaceBtn.Text = "自动面对"
-        local faceBomberBtn = createFeatureButton(jumpContainer, "Face Bomber", true, function() CFG.FACE_BOMBER = CategoryStates["Face Bomber"] end)
-        faceBomberBtn.Text = "面对炸弹兵"
-        local wallCheckBtn = createFeatureButton(jumpContainer, "Wall Check", true, function() CFG.WALL_CHECK = CategoryStates["Wall Check"] end)
-        wallCheckBtn.Text = "墙体检测"
-        local showRangeBtn = createFeatureButton(jumpContainer, "Show Range", true, function() CFG.SHOW_RANGE = CategoryStates["Show Range"] end)
-        showRangeBtn.Text = "显示范围"
-        local distPlus = createFeatureButton(jumpContainer, "Dist +", false, function() CFG.SCAN_DIST = math.min(CFG.SCAN_DIST + 5, 100) end, true)
-        distPlus.Text = "距离 +"
-        local distMinus = createFeatureButton(jumpContainer, "Dist -", false, function() CFG.SCAN_DIST = math.max(CFG.SCAN_DIST - 5, 5) end, true)
-        distMinus.Text = "距离 -"
-        local offsetPlus = createFeatureButton(jumpContainer, "Offset +", false, function() CFG.LEFT_OFFSET = CFG.LEFT_OFFSET + 1 end, true)
-        offsetPlus.Text = "偏移 +"
-        local offsetMinus = createFeatureButton(jumpContainer, "Offset -", false, function() CFG.LEFT_OFFSET = CFG.LEFT_OFFSET - 1 end, true)
-        offsetMinus.Text = "偏移 -"
+        -- 杀戮光环核心开关
+        local killBtn = createFeatureButton(subScroll, "核心杀戮", false, function() KILLAURA_ON = FeatureStates["核心杀戮"] end)
+        killBtn.Text = "核心杀戮"
+        local autoFace = createFeatureButton(subScroll, "自动朝向", false, function() AUTO_FACE_ON = FeatureStates["自动朝向"] end)
+        autoFace.Text = "自动朝向"
+        local jumpSwing = createFeatureButton(subScroll, "挥刀跳", false, function() JUMP_SWING_ON = FeatureStates["挥刀跳"] end)
+        jumpSwing.Text = "挥刀跳"
+        local autoEquip = createFeatureButton(subScroll, "自动装备", false, function() AUTO_EQUIP_ON = FeatureStates["自动装备"] end)
+        autoEquip.Text = "自动装备"
         
-        local bayonetContainer = Instance.new("Frame")
-        bayonetContainer.Size, bayonetContainer.BackgroundTransparency, bayonetContainer.ClipsDescendants, bayonetContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
-        Instance.new("UIListLayout", bayonetContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local bayonetBtn = createFeatureButton(subScroll, "Bayonet Assist", false, function() local s = FeatureStates["Bayonet Assist"] CFG.BAYONET_ON = s TweenService:Create(bayonetContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 60) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        bayonetBtn.Text = "刺刀辅助"
-        local bayoShowRange = createFeatureButton(bayonetContainer, "Show Range", true, function() CFG.BAYONET_SHOW_RANGE = CategoryStates["Show Range"] end)
-        bayoShowRange.Text = "显示范围"
-        local bayoWallCheck = createFeatureButton(bayonetContainer, "Wall Check", true, function() CFG.BAYONET_WALL_CHECK = CategoryStates["Wall Check"] end)
-        bayoWallCheck.Text = "墙体检测"
-        local bayoAimBomber = createFeatureButton(bayonetContainer, "Aim Bomber", true, function() CFG.BAYONET_FACE_BOMBER = CategoryStates["Aim Bomber"] end)
-        bayoAimBomber.Text = "瞄准炸弹兵"
-
-        local gunContainer = Instance.new("Frame")
-        gunContainer.Size, gunContainer.BackgroundTransparency, gunContainer.ClipsDescendants, gunContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
-        Instance.new("UIListLayout", gunContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local gunModsBtn = createFeatureButton(subScroll, "Gun Mods", false, function() 
-            local s = FeatureStates["Gun Mods"] 
-            TweenService:Create(gunContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 220) or UDim2.new(1, 0, 0, 0)}):Play() 
+        -- 肘击配置
+        local elbowContainer = Instance.new("Frame")
+        elbowContainer.Size, elbowContainer.BackgroundTransparency, elbowContainer.ClipsDescendants, elbowContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
+        Instance.new("UIListLayout", elbowContainer).SortOrder = Enum.SortOrder.LayoutOrder
+        local elbowMain = createFeatureButton(subScroll, "肘击光环", false, function()
+            local s = FeatureStates["肘击光环"]
+            TweenService:Create(elbowContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 60) or UDim2.new(1, 0, 0, 0)}):Play()
         end)
-        gunModsBtn.Text = "枪械模组"
-        local autoShoot = createFeatureButton(gunContainer, "Auto Shoot", true, function() CFG.AUTO_SHOOT = CategoryStates["Auto Shoot"] end)
-        autoShoot.Text = "自动射击"
-        local silentAim = createFeatureButton(gunContainer, "Silent Aim", true, function() CFG.SILENT_AIM = CategoryStates["Silent Aim"] end)
-        silentAim.Text = "静默瞄准"
-        local instaShoot = createFeatureButton(gunContainer, "Insta Shoot", true, function() CFG.INSTANT_SHOOT = CategoryStates["Insta Shoot"] end)
-        instaShoot.Text = "瞬间射击"
-        local autoReload = createFeatureButton(gunContainer, "Auto Reload", true, function() CFG.AUTO_RELOAD = CategoryStates["Auto Reload"] end)
-        autoReload.Text = "自动装填"
-        local gunWall = createFeatureButton(gunContainer, "Wall Check", true, function() CFG.GUN_WALL_CHECK = CategoryStates["Wall Check"] end)
-        gunWall.Text = "墙体检测"
-        local useFov = createFeatureButton(gunContainer, "Use FOV", true, function() CFG.USE_FOV = CategoryStates["Use FOV"] end)
-        useFov.Text = "使用视野"
-        local showFov = createFeatureButton(gunContainer, "Show FOV", true, function() CFG.SHOW_FOV = CategoryStates["Show FOV"] end)
-        showFov.Text = "显示视野圈"
-        local fovPlus = createFeatureButton(gunContainer, "FOV +", false, function() CFG.FOV_SIZE = math.min(CFG.FOV_SIZE + 5, 120) end, true)
-        fovPlus.Text = "视野圈 +"
-        local fovMinus = createFeatureButton(gunContainer, "FOV -", false, function() CFG.FOV_SIZE = math.max(CFG.FOV_SIZE - 5, 10) end, true)
-        fovMinus.Text = "视野圈 -"
-        local mortarTime = createFeatureButton(gunContainer, "Mortar Time", true, function() CFG.HAND_MORTAR_TIMING = CategoryStates["Mortar Time"] end)
-        mortarTime.Text = "迫击炮时机"
+        elbowMain.Text = "肘击光环"
+        local elbow1 = createFeatureButton(elbowContainer, "肘击_工兵斧", false, function() activeStates["肘击_工兵斧"] = FeatureStates["肘击_工兵斧"] end)
+        elbow1.Text = "工兵斧肘击"
+        local elbow2 = createFeatureButton(elbowContainer, "肘击_卡宾枪", false, function() activeStates["肘击_卡宾枪"] = FeatureStates["肘击_卡宾枪"] end)
+        elbow2.Text = "卡宾枪肘击"
     end
     
     if name == "Visuals" then
+        local fullBright = createFeatureButton(subScroll, "全图高亮", false, function() FULL_BRIGHT_ON = FeatureStates["全图高亮"] end)
+        fullBright.Text = "全图高亮"
+        -- ESP 配置
         local espContainer = Instance.new("Frame")
         espContainer.Size, espContainer.BackgroundTransparency, espContainer.ClipsDescendants, espContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", espContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local espBtn = createFeatureButton(subScroll, "Zombie ESP", false, function() local s = FeatureStates["Zombie ESP"] TweenService:Create(espContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 180) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        espBtn.Text = "僵尸透视"
-        local sortedESP = {"Bomber", "Igniter", "Zapper", "Runner", "Cuirassier"}
-        local espNames = {Bomber="炸弹兵", Igniter="点火者", Zapper="电击者", Runner="跑者", Cuirassier="胸甲骑兵"}
-        for _, espName in ipairs(sortedESP) do
-            local btn = createFeatureButton(espContainer, espName, true, function() activeStates[espName] = CategoryStates[espName] end)
-            btn.Text = espNames[espName]
-        end
-        local bomberAlert = createFeatureButton(espContainer, "Bomber Alert", true, function() activeStates["BomberAlert"] = CategoryStates["Bomber Alert"] end)
-        bomberAlert.Text = "炸弹兵警报"
-    end
-    
-    if name == "Player" then
-        local wudiBtn = createFeatureButton(subScroll, "无敌", false, function()
-            CFG.WUDI_ON = not CFG.WUDI_ON
-            if not CFG.WUDI_ON then
-                wudiTargetPlayer = nil
-                local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-                if hum then hum:Move(Vector3.zero) end
-            end
+        local espMain = createFeatureButton(subScroll, "僵尸透视", false, function()
+            local s = FeatureStates["僵尸透视"]
+            TweenService:Create(espContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 180) or UDim2.new(1, 0, 0, 0)}):Play()
         end)
-        wudiBtn.Text = "无敌(碰飞)"
+        espMain.Text = "僵尸透视"
+        local espNames = {自爆="自爆", 二师兄="二师兄", 红眼="红眼", 大师兄="大师兄", 燃烧者="燃烧者"}
+        for espName, display in pairs(espNames) do
+            local btn = createFeatureButton(espContainer, espName, false, function() activeStates[espName] = FeatureStates[espName] end)
+            btn.Text = display
+        end
+        local alertBtn = createFeatureButton(espContainer, "自爆提醒", false, function() activeStates["自爆提醒"] = FeatureStates["自爆提醒"] end)
+        alertBtn.Text = "自爆警报"
     end
     
     if name == "Movement" then
@@ -1027,29 +827,29 @@ local function createSubWindow(name, items)
         Instance.new("UIListLayout", speedContainer).SortOrder = Enum.SortOrder.LayoutOrder
         local speedMain = createFeatureButton(subScroll, "Speed 增强", false, function()
             local s = FeatureStates["Speed 增强"]
-            CFG.SPEED_ENABLED = s
+            SPEED_ENABLED = s
             TweenService:Create(speedContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 45) or UDim2.new(1, 0, 0, 0)}):Play()
         end)
         speedMain.Text = "Speed 增强"
         local speedSliderFrame = Instance.new("Frame")
         speedSliderFrame.Size, speedSliderFrame.BackgroundTransparency, speedSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, speedContainer
         local speedLabel = Instance.new("TextLabel")
-        speedLabel.Size, speedLabel.BackgroundTransparency, speedLabel.Text, speedLabel.TextColor3, speedLabel.TextSize, speedLabel.Font, speedLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "Speed: " .. CFG.SPEED_VALUE, Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
+        speedLabel.Size, speedLabel.BackgroundTransparency, speedLabel.Text, speedLabel.TextColor3, speedLabel.TextSize, speedLabel.Font, speedLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "Speed: " .. SPEED_VALUE, Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
         local speedBox = Instance.new("TextBox")
-        speedBox.Size, speedBox.Position, speedBox.BackgroundTransparency, speedBox.Text, speedBox.TextColor3, speedBox.TextSize, speedBox.Font, speedBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.SPEED_VALUE), Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
+        speedBox.Size, speedBox.Position, speedBox.BackgroundTransparency, speedBox.Text, speedBox.TextColor3, speedBox.TextSize, speedBox.Font, speedBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(SPEED_VALUE), Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
         speedBox.FocusLost:Connect(function()
             local val = tonumber(speedBox.Text)
             if val then
                 val = math.clamp(val, 16, 250)
-                CFG.SPEED_VALUE = val
+                SPEED_VALUE = val
                 speedBox.Text = tostring(val)
                 speedLabel.Text = "Speed: " .. val
-                if CFG.SPEED_ENABLED then
+                if SPEED_ENABLED then
                     local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
                     if hum then hum.WalkSpeed = val end
                 end
             else
-                speedBox.Text = tostring(CFG.SPEED_VALUE)
+                speedBox.Text = tostring(SPEED_VALUE)
             end
         end)
         
@@ -1059,25 +859,67 @@ local function createSubWindow(name, items)
         Instance.new("UIListLayout", sprintContainer).SortOrder = Enum.SortOrder.LayoutOrder
         local sprintMain = createFeatureButton(subScroll, "疾跑增强", false, function()
             local s = FeatureStates["疾跑增强"]
-            CFG.SPRINT_BOOST = s
+            SPRINT_BOOST = s
             TweenService:Create(sprintContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 45) or UDim2.new(1, 0, 0, 0)}):Play()
         end)
         sprintMain.Text = "疾跑增强"
         local sprintSliderFrame = Instance.new("Frame")
         sprintSliderFrame.Size, sprintSliderFrame.BackgroundTransparency, sprintSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, sprintContainer
         local sprintLabel = Instance.new("TextLabel")
-        sprintLabel.Size, sprintLabel.BackgroundTransparency, sprintLabel.Text, sprintLabel.TextColor3, sprintLabel.TextSize, sprintLabel.Font, sprintLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "倍率: " .. CFG.SPRINT_BOOST_VALUE, Color3.new(1,1,1), 12, Enum.Font.Gotham, sprintSliderFrame
+        sprintLabel.Size, sprintLabel.BackgroundTransparency, sprintLabel.Text, sprintLabel.TextColor3, sprintLabel.TextSize, sprintLabel.Font, sprintLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "倍率: " .. SPRINT_BOOST_VALUE, Color3.new(1,1,1), 12, Enum.Font.Gotham, sprintSliderFrame
         local sprintBox = Instance.new("TextBox")
-        sprintBox.Size, sprintBox.Position, sprintBox.BackgroundTransparency, sprintBox.Text, sprintBox.TextColor3, sprintBox.TextSize, sprintBox.Font, sprintBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.SPRINT_BOOST_VALUE), Color3.new(1,1,1), 12, Enum.Font.Gotham, sprintSliderFrame
+        sprintBox.Size, sprintBox.Position, sprintBox.BackgroundTransparency, sprintBox.Text, sprintBox.TextColor3, sprintBox.TextSize, sprintBox.Font, sprintBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(SPRINT_BOOST_VALUE), Color3.new(1,1,1), 12, Enum.Font.Gotham, sprintSliderFrame
         sprintBox.FocusLost:Connect(function()
             local val = tonumber(sprintBox.Text)
             if val then
                 val = math.clamp(val, 1.0, 5.0)
-                CFG.SPRINT_BOOST_VALUE = val
+                SPRINT_BOOST_VALUE = val
                 sprintBox.Text = tostring(val)
                 sprintLabel.Text = "倍率: " .. val
             else
-                sprintBox.Text = tostring(CFG.SPRINT_BOOST_VALUE)
+                sprintBox.Text = tostring(SPRINT_BOOST_VALUE)
+            end
+        end)
+    end
+    
+    if name == "Player" then
+        -- 无敌（碰飞）
+        local wudiBtn = createFeatureButton(subScroll, "无敌", false, function()
+            WUDI_ON = FeatureStates["无敌"]
+            if not WUDI_ON then
+                wudiTargetPlayer = nil
+                local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+                if hum then hum:Move(Vector3.zero) end
+            end
+        end)
+        wudiBtn.Text = "无敌(碰飞)"
+        
+        -- 丝滑飞行
+        local flyContainer = Instance.new("Frame")
+        flyContainer.Size, flyContainer.BackgroundTransparency, flyContainer.ClipsDescendants, flyContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
+        Instance.new("UIListLayout", flyContainer).SortOrder = Enum.SortOrder.LayoutOrder
+        local flyMain = createFeatureButton(subScroll, "丝滑飞行", false, function()
+            local s = FeatureStates["丝滑飞行"]
+            FLY_ENABLED = s
+            onFlyToggled()
+            TweenService:Create(flyContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 45) or UDim2.new(1, 0, 0, 0)}):Play()
+        end)
+        flyMain.Text = "丝滑飞行"
+        local flySliderFrame = Instance.new("Frame")
+        flySliderFrame.Size, flySliderFrame.BackgroundTransparency, flySliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, flyContainer
+        local flyLabel = Instance.new("TextLabel")
+        flyLabel.Size, flyLabel.BackgroundTransparency, flyLabel.Text, flyLabel.TextColor3, flyLabel.TextSize, flyLabel.Font, flyLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "速度: " .. FLY_SPEED, Color3.new(1,1,1), 12, Enum.Font.Gotham, flySliderFrame
+        local flyBox = Instance.new("TextBox")
+        flyBox.Size, flyBox.Position, flyBox.BackgroundTransparency, flyBox.Text, flyBox.TextColor3, flyBox.TextSize, flyBox.Font, flyBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(FLY_SPEED), Color3.new(1,1,1), 12, Enum.Font.Gotham, flySliderFrame
+        flyBox.FocusLost:Connect(function()
+            local val = tonumber(flyBox.Text)
+            if val then
+                val = math.clamp(val, 10, 250)
+                FLY_SPEED = val
+                flyBox.Text = tostring(val)
+                flyLabel.Text = "速度: " .. val
+            else
+                flyBox.Text = tostring(FLY_SPEED)
             end
         end)
     end
@@ -1099,8 +941,7 @@ local function initResizeLogic()
 end
 
 local function createSettingSub()
-    local name = "UI Setup"
-    local sub = createBaseFrame(name.."_Sub")
+    local sub = createBaseFrame("UI Setup_Sub")
     sub.Parent = ScreenGui
     local subTitle = createTitleBar(sub, "界面设置")
     local subScroll = Instance.new("ScrollingFrame")
@@ -1132,7 +973,7 @@ local function createSettingSub()
         themeBtn.Text = display
     end
     setupDraggableAndToggle(sub, subTitle, subScroll, false)
-    SubUIFrames[name] = sub
+    SubUIFrames["UI Setup"] = sub
 end
 
 RunService.RenderStepped:Connect(function()
@@ -1158,8 +999,8 @@ local function initMainButtonDragging()
     UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then if bDrag then bDrag = false if not bMoved then MainFrame.Visible = not MainFrame.Visible TweenService:Create(Blur, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Size = MainFrame.Visible and 14 or 0}):Play() else MainButton.Position = (MainButton.AbsolutePosition.X < ScreenGui.AbsoluteSize.X/2) and UDim2.new(0, 5, MainButton.Position.Y.Scale, MainButton.Position.Y.Offset) or UDim2.new(1, -40, MainButton.Position.Y.Scale, MainButton.Position.Y.Offset) end end end end)
 end
 
-local SubLists = {["Combat"] = {}, ["Movement"] = {}, ["Visuals"] = {}, ["Player"] = {}}
-local listOrder = {"Combat", "Movement", "Visuals", "Player", "UI Setup"}
+local SubLists = {["Combat"] = {}, ["Visuals"] = {}, ["Movement"] = {}, ["Player"] = {}}
+local listOrder = {"Combat", "Visuals", "Movement", "Player", "UI Setup"}
 for _, c in ipairs(listOrder) do 
     if c == "UI Setup" then 
         createSettingSub() 
@@ -1167,7 +1008,7 @@ for _, c in ipairs(listOrder) do
         createSubWindow(c, SubLists[c]) 
     end 
     local btn = createFeatureButton(MainContent, c, true, function() toggleSubUI(c) end)
-    local btnNames = {Combat="战斗", Movement="移动", Visuals="视觉效果", Player="玩家", ["UI Setup"]="界面设置"}
+    local btnNames = {Combat="战斗", Visuals="视觉效果", Movement="移动", Player="玩家", ["UI Setup"]="界面设置"}
     btn.Text = btnNames[c] or c
 end
 
