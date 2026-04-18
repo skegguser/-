@@ -1,4 +1,3 @@
--- ================= SDGT ELIT 完整版（含独立飞行绕过UI） =================
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
@@ -11,7 +10,6 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Camera = workspace:WaitForChild("Camera")
 
--- ========== 原水调歌头配置（完整保留） ==========
 local CFG = {
     JUMP_ON = false,
     AUTO_FACE_ON = false,
@@ -43,11 +41,8 @@ local CFG = {
     MAX_RANGE = 200,
     HAND_MORTAR_TIMING = false,
 
-    -- 无敌（碰飞）
+    -- 新增配置
     WUDI_ON = false,
-    -- 移动 Speed 增强（放在移动分类）
-    SPEED_ENABLED = false,
-    SPEED_VALUE = 32,
 }
 
 local activeStates = {}
@@ -56,6 +51,64 @@ local persistentBurners = {}
 local currentTarget = nil
 local ALERT_RANGE = 20
 
+-- 肘击配置
+local ELBOW_CONFIGS = {
+    ["工兵斧"] = {weapon = "Axe", range = 14, delay = 0.10},
+    ["卡宾枪"] = {weapon = "Carbine", range = 14, delay = 0.10}
+}
+local lastElbowTimes = {}
+
+-- 肘击辅助函数
+local function getElbowRemote(weaponName)
+    local tool = LocalPlayer.Backpack:FindFirstChild(weaponName) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(weaponName))
+    return tool and tool:FindFirstChild("RemoteEvent")
+end
+
+local function findElbowTarget(range)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local zombies = workspace:FindFirstChild("Zombies")
+    if not hrp or not zombies then return nil end
+    local closest, dist = nil, range
+    for _, z in pairs(zombies:GetChildren()) do
+        if z:IsA("Model") and not z:FindFirstChild("Barrel", true) and z.Name ~= "m_Zombie" then
+            local zHrp = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso")
+            local hum = z:FindFirstChildOfClass("Humanoid")
+            if zHrp and hum and hum.Health > 0 then
+                local d = (hrp.Position - zHrp.Position).Magnitude
+                if d < dist then closest = z; dist = d end
+            end
+        end
+    end
+    return closest
+end
+
+local function attackElbow(target, weaponType, lastTime, delay)
+    local now = tick()
+    if now - lastTime < delay then return lastTime end
+    local remote = getElbowRemote(weaponType == "工兵斧" and "Axe" or "Carbine")
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local tRoot = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
+    if not remote or not root or not tRoot then return lastTime end
+    pcall(function()
+        if weaponType == "工兵斧" then
+            remote:FireServer("Equip", root); remote:FireServer("BraceBlock"); remote:FireServer("FeedbackStun", target, tRoot.Position); remote:FireServer("StopBraceBlock")
+        else
+            remote:FireServer("Shove"); remote:FireServer("FeedbackStun", target, tRoot.Position)
+        end
+    end)
+    return now
+end
+
+-- 无敌（碰飞）变量
+local wudiTargetPlayer = nil
+local wudiMoveLoopRunning = true
+local wudiPushLoopRunning = true
+
+-- 飞行独立UI句柄
+local flyScreenGui = nil
+
+-- 以下是原文件内容（保持不变，直到UI部分）
 local ESP_CONFIGS = {
     ["Bomber"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Torch", true) end, color = Color3.fromRGB(255, 230, 0), alert = true},
     ["Cuirassier"] = {check = function(obj) return obj:IsA("Model") and obj.Name == "m_Zombie" and obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(0, 255, 150), alert = false},
@@ -70,11 +123,11 @@ local ESP_CONFIGS = {
 }
 
 local BeamFolder = Instance.new("Folder", workspace)
-BeamFolder.Name = "SDGT_Beams"
+BeamFolder.Name = "ZzcHub_Beams"
 
 local function createBeam()
     local part = Instance.new("Part")
-    part.Name = "SDGT_Laser"
+    part.Name = "Zzc_Laser"
     part.Anchored = true
     part.CanCollide = false
     part.CanTouch = false
@@ -98,18 +151,12 @@ local reloadInProgress = {}
 local activeConnections = {}
 local watchedTools = {}
 
--- 无敌（碰飞）变量
-local wudiTargetPlayer = nil
-local wudiMoveLoopRunning = true
-local wudiPushLoopRunning = true
-local originalWalkSpeed = nil
-
--- ========== 辅助函数（原脚本） ==========
 local function ensureFovGui()
     if fovGui and fovGui.Parent then return fovGui, fovCircle end
     fovGui = Instance.new("ScreenGui", PlayerGui)
     fovGui.Name = "Gun_FovGui"
     fovGui.ResetOnSpawn = false
+    
     local circle = Instance.new("Frame", fovGui)
     circle.AnchorPoint = Vector2.new(0.5, 0.5)
     circle.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -204,7 +251,9 @@ local function performReload(tool, targetShots)
     reloadInProgress[tool] = true
     local remote = findRemoteForTool(tool)
     if not remote then reloadInProgress[tool] = nil return end
+    
     if targetShots > 1 then pcall(function() remote:FireServer("StartReload") end) task.wait(0.1) end
+    
     local attempts = 0
     while attempts < 50 do
         if getShotsLoadedForTool(tool) >= targetShots then
@@ -236,9 +285,11 @@ local function getNearestZombie(range)
     local cam = Workspace.CurrentCamera
     local originPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and LocalPlayer.Character.Head.Position or cam.CFrame.Position
     if not originPos then return nil end
+
     local bestPart, bestModel, bestDist = nil, nil, range
     local zombiesFolder = Workspace:FindFirstChild("Zombies")
     if not zombiesFolder then return nil end
+
     for _, model in ipairs(zombiesFolder:GetDescendants()) do
         if model:IsA("Model") and not model:FindFirstChild("Spawn") then
             local hum = model:FindFirstChildOfClass("Humanoid")
@@ -266,6 +317,7 @@ RunService.Heartbeat:Connect(function()
     else
         silentAimCurrentTarget = nil
     end
+
     if CFG.AUTO_SHOOT or CFG.AUTO_SAVE_PLAYERS then
         local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
         if tool and isGun(tool) and getShotsLoadedForTool(tool) > 0 then
@@ -467,6 +519,7 @@ RunService.Heartbeat:Connect(function()
     local anyNear, currentTargets = false, {}
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
+    
     for _, obj in ipairs(Camera:GetChildren()) do
         for name, config in pairs(ESP_CONFIGS) do
             if activeStates[name] and config.check(obj) then
@@ -480,6 +533,7 @@ RunService.Heartbeat:Connect(function()
             end
         end
     end
+    
     for m, d in pairs(espHighlights) do 
         if not currentTargets[m] or not m:IsDescendantOf(workspace) then 
             if d.hl then d.hl:Destroy() end
@@ -488,6 +542,7 @@ RunService.Heartbeat:Connect(function()
             persistentBurners[m] = nil
         end 
     end
+
     if not CFG.AUTO_FACE_ON then currentTarget = nil return end
     scanTarget()
     if currentTarget then
@@ -524,6 +579,7 @@ local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
+    
     if CFG.JUMP_ON and method == "FireServer" and tostring(self) == "RemoteEvent" then
         if args[1] == "Swing" or args[1] == "Thrust" then
             task.defer(function()
@@ -533,6 +589,7 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             end)
         end
     end
+
     if CFG.SILENT_AIM and method == "Raycast" and (self == Workspace or self.ClassName == "Workspace") then
         if not checkcaller() and silentAimCurrentTarget then
             local origin = args[1]
@@ -542,6 +599,7 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             return oldNamecall(self, unpack(args))
         end
     end
+
     return oldNamecall(self, ...)
 end)
 
@@ -617,81 +675,47 @@ task.spawn(function()
     end
 end)
 
--- ================= 移动 Speed 增强（放在移动分类） =================
-task.spawn(function()
-    while true do
-        task.wait()
-        local char = LocalPlayer.Character
-        if not char then continue end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum then continue end
-        if originalWalkSpeed == nil then originalWalkSpeed = hum.WalkSpeed end
-        if CFG.SPEED_ENABLED then
-            hum.WalkSpeed = CFG.SPEED_VALUE
-        else
-            hum.WalkSpeed = originalWalkSpeed
-        end
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        if CFG.SPEED_ENABLED then
-            hum.WalkSpeed = CFG.SPEED_VALUE
-        else
-            hum.WalkSpeed = originalWalkSpeed or 16
-        end
-    end
-end)
-
--- ================= 独立飞行绕过 UI（完全来自飞行不拉回GB.lua） =================
+-- ================= 飞行独立UI（来自飞行不拉回GB.lua） =================
 local function createFlyUI()
-    -- 防止重复创建
-    if PlayerGui:FindFirstChild("SDGT_FlyUI") then return end
-    local flyScreenGui = Instance.new("ScreenGui", PlayerGui)
-    flyScreenGui.Name = "SDGT_FlyUI"
+    if flyScreenGui then flyScreenGui:Destroy() end
+    flyScreenGui = Instance.new("ScreenGui", PlayerGui)
+    flyScreenGui.Name = "FlyUI_SDGT"
     flyScreenGui.ResetOnSpawn = false
 
-    local flyMainFrame = Instance.new("Frame", flyScreenGui)
-    flyMainFrame.Size = UDim2.new(0, 180, 0, 140)
-    flyMainFrame.Position = UDim2.new(0.5, -90, 0.4, 0)
-    flyMainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    flyMainFrame.BorderSizePixel = 0
-    flyMainFrame.ClipsDescendants = true
-    Instance.new("UICorner", flyMainFrame).CornerRadius = UDim.new(0, 15)
+    local MainFrame = Instance.new("Frame", flyScreenGui)
+    MainFrame.Size = UDim2.new(0, 180, 0, 140)
+    MainFrame.Position = UDim2.new(0.5, -90, 0.4, 0)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.ClipsDescendants = true
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 15)
 
-    local title = Instance.new("TextLabel", flyMainFrame)
-    title.Size = UDim2.new(1, 0, 0, 30)
-    title.BackgroundTransparency = 1
-    title.Text = "丝滑飞行"
-    title.TextColor3 = Color3.new(0.8, 0.8, 0.8)
-    title.TextSize = 12
+    local Title = Instance.new("TextLabel", MainFrame)
+    Title.Size = UDim2.new(1, 0, 0, 30)
+    Title.BackgroundTransparency = 1
+    Title.Text = "丝滑飞行"
+    Title.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    Title.TextSize = 12
 
-    local speedInput = Instance.new("TextBox", flyMainFrame)
-    speedInput.Size = UDim2.new(0, 140, 0, 30)
-    speedInput.Position = UDim2.new(0.5, -70, 0, 40)
-    speedInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    speedInput.Text = "35"
-    speedInput.TextColor3 = Color3.new(1, 1, 1)
-    Instance.new("UICorner", speedInput).CornerRadius = UDim.new(0, 8)
+    local SpeedInput = Instance.new("TextBox", MainFrame)
+    SpeedInput.Size = UDim2.new(0, 140, 0, 30)
+    SpeedInput.Position = UDim2.new(0.5, -70, 0, 40)
+    SpeedInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    SpeedInput.Text = "35"
+    SpeedInput.TextColor3 = Color3.new(1, 1, 1)
+    Instance.new("UICorner", SpeedInput).CornerRadius = UDim.new(0, 8)
 
-    local toggleBtn = Instance.new("TextButton", flyMainFrame)
-    toggleBtn.Size = UDim2.new(0, 140, 0, 40)
-    toggleBtn.Position = UDim2.new(0.5, -70, 0, 85)
-    toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    toggleBtn.Text = "丝滑飞行: OFF"
-    toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 10)
+    local Toggle = Instance.new("TextButton", MainFrame)
+    Toggle.Size = UDim2.new(0, 140, 0, 40)
+    Toggle.Position = UDim2.new(0.5, -70, 0, 85)
+    Toggle.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    Toggle.Text = "丝滑飞行: OFF"
+    Toggle.TextColor3 = Color3.new(1, 1, 1)
+    Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 10)
 
-    -- 飞行核心变量
     local isFlying = false
     local flySpeed = 35
-    local flyBodyVelocity = nil
-    local flyBodyGyro = nil
-    local flyAnimCache = nil
-    local flyControlModule = nil
+    local flyBodyVelocity, flyBodyGyro, flyAnimCache, flyControlModule = nil, nil, nil, nil
 
     local function getControlModule()
         if flyControlModule then return flyControlModule end
@@ -753,35 +777,31 @@ local function createFlyUI()
         end
     end
 
-    toggleBtn.MouseButton1Click:Connect(function()
+    Toggle.MouseButton1Click:Connect(function()
         isFlying = not isFlying
-        flySpeed = tonumber(speedInput.Text) or 35
-        toggleBtn.Text = isFlying and "已开启 - 运行中" or "丝滑飞行: OFF"
-        TweenService:Create(toggleBtn, TweenInfo.new(0.3), {BackgroundColor3 = isFlying and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(60, 60, 60)}):Play()
-        if isFlying then
-            startFly()
-        else
-            stopFly()
-        end
+        flySpeed = tonumber(SpeedInput.Text) or 35
+        Toggle.Text = isFlying and "已开启 - 运行中" or "丝滑飞行: OFF"
+        TweenService:Create(Toggle, TweenInfo.new(0.3), {BackgroundColor3 = isFlying and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(60, 60, 60)}):Play()
+        if isFlying then startFly() else stopFly() end
     end)
 
     -- 拖动逻辑
     local dragging, dragStart, startPos
     local function update(input)
         local delta = input.Position - dragStart
-        flyMainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
-    flyMainFrame.InputBegan:Connect(function(input)
+    MainFrame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
-            startPos = flyMainFrame.Position
+            startPos = MainFrame.Position
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
-    flyMainFrame.InputChanged:Connect(function(input)
+    MainFrame.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
             dragStart = input.Position
         end
@@ -794,7 +814,7 @@ local function createFlyUI()
 
     -- 关闭和最小化按钮
     local function topBtn(t, x, c, f)
-        local b = Instance.new("TextButton", flyMainFrame)
+        local b = Instance.new("TextButton", MainFrame)
         b.Size = UDim2.new(0, 25, 0, 25)
         b.Position = UDim2.new(1, x, 0, 5)
         b.Text = t
@@ -803,36 +823,36 @@ local function createFlyUI()
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
         b.MouseButton1Click:Connect(f)
     end
-    topBtn("×", -30, Color3.fromRGB(150,50,50), function() isFlying = false; flyScreenGui:Destroy() end)
+    topBtn("×", -30, Color3.fromRGB(150,50,50), function() isFlying = false; flyScreenGui:Destroy(); flyScreenGui = nil end)
     topBtn("-", -60, Color3.fromRGB(70,70,70), function()
-        local collapsed = flyMainFrame.Size.Y.Offset < 140
+        local collapsed = MainFrame.Size.Y.Offset < 140
         local targetH = collapsed and 140 or 35
-        TweenService:Create(flyMainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {Size = UDim2.new(0, 180, 0, targetH)}):Play()
-        toggleBtn.Visible = collapsed
-        speedInput.Visible = collapsed
+        TweenService:Create(MainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {Size = UDim2.new(0, 180, 0, targetH)}):Play()
+        Toggle.Visible = collapsed
+        SpeedInput.Visible = collapsed
     end)
 
     -- 进场动画
-    flyMainFrame.Size = UDim2.new(0, 0, 0, 0)
-    flyMainFrame:TweenSize(UDim2.new(0, 180, 0, 140), "Out", "Back", 0.5)
+    MainFrame.Size = UDim2.new(0, 0, 0, 0)
+    MainFrame:TweenSize(UDim2.new(0, 180, 0, 140), "Out", "Back", 0.5)
 
     -- 摔伤拦截（飞行专用）
     local mt = getrawmetatable(game)
-    local oldNamecall = mt.__namecall
+    local oldNamecallFly = mt.__namecall
     setreadonly(mt, false)
     mt.__namecall = newcclosure(function(self, ...)
         local method = getnamecallmethod()
         if method == "FireServer" and tostring(self) == "ForceSelfDamage" then
             return nil
         end
-        return oldNamecall(self, ...)
+        return oldNamecallFly(self, ...)
     end)
     setreadonly(mt, true)
 end
 
--- ================= UI 部分（SDGT ELIT 风格） =================
+-- ================= UI 部分（基于原文件，修改标题和主按钮文字为SDGT ELIT，并添加肘击和Player分类） =================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "SDGT_Elite_Gui"
+ScreenGui.Name = "SDGT_Elite"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder = 999999999
@@ -877,17 +897,6 @@ local function applyThemeColors(frame, isTitle)
     elseif CurrentTheme == "DeepSea" then frame.BackgroundColor3 = Color3.fromRGB(0, 15, 25) if not isTitle then frame.BackgroundTransparency = 0.25 end end
 end
 
-local BASE_WIDTH = 90
-local BASE_FONT_SIZE = 8
-
-local function updateFontSizes()
-    local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
-    local newSize = math.floor(BASE_FONT_SIZE * scale)
-    for _, btn in ipairs(AllButtons) do if btn:IsA("TextButton") then btn.TextSize = newSize end end
-    for _, title in ipairs(AllTitles) do if title:IsA("TextButton") then title.TextSize = math.floor(newSize * 1.2) end end
-    updateStatusPanel()
-end
-
 local function applyDreamyGradient(label)
     local textGradient = label:FindFirstChild("DreamyGradient") or Instance.new("UIGradient")
     textGradient.Name, textGradient.Color, textGradient.Parent = "DreamyGradient", ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 100, 255)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(100, 200, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 255, 200))}), label
@@ -917,26 +926,15 @@ end
 local function updateStatusPanel()
     for _, child in ipairs(StatusPanel:GetChildren()) do if child:IsA("TextLabel") then child:Destroy() end end
     if not ShowStatus then return end
-    local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
-    local titleSize = math.floor(12 * scale)
-    local textSize = math.floor(10 * scale)
     local header = Instance.new("TextLabel")
-    header.Size, header.AutomaticSize, header.BackgroundTransparency, header.BackgroundColor3, header.BorderSizePixel, header.Text, header.Font, header.TextSize, header.TextColor3, header.TextXAlignment, header.LayoutOrder, header.Parent = UDim2.new(0, 0, 0, 16), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, "SDGT ELIT  ", Enum.Font.GothamBold, titleSize, Color3.new(1,1,1), Enum.TextXAlignment.Right, -1, StatusPanel
+    header.Size, header.AutomaticSize, header.BackgroundTransparency, header.BackgroundColor3, header.BorderSizePixel, header.Text, header.Font, header.TextSize, header.TextColor3, header.TextXAlignment, header.LayoutOrder, header.Parent = UDim2.new(0, 0, 0, 16), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, "SDGT ELIT  ", Enum.Font.GothamBold, 12, Color3.new(1,1,1), Enum.TextXAlignment.Right, -1, StatusPanel
     applyDreamyGradient(header)
     local activeNames = {}
     for name, state in pairs(FeatureStates) do if state then table.insert(activeNames, name) end end
     table.sort(activeNames, function(a, b) return #(a .. "  ") > #(b .. "  ") end)
-    local nameMap = {
-        ["Swing Jump"]="跳跃攻击", ["Auto Face"]="自动面对", ["Face Bomber"]="面对炸弹兵", ["Wall Check"]="墙体检测",
-        ["Show Range"]="显示范围", ["Bayonet Assist"]="刺刀辅助", ["Aim Bomber"]="瞄准炸弹兵", ["Gun Mods"]="枪械模组",
-        ["Auto Shoot"]="自动射击", ["Silent Aim"]="静默瞄准", ["Insta Shoot"]="瞬间射击", ["Auto Reload"]="自动装填",
-        ["Use FOV"]="使用视野", ["Show FOV"]="显示视野圈", ["Mortar Time"]="迫击炮时机", ["Zombie ESP"]="僵尸透视",
-        ["无敌"]="无敌(碰飞)", ["Speed 增强"]="Speed增强", ["飞行绕过"]="飞行绕过"
-    }
     for i, name in ipairs(activeNames) do
-        local display = nameMap[name] or name
         local label = Instance.new("TextLabel")
-        label.Size, label.AutomaticSize, label.BackgroundTransparency, label.BackgroundColor3, label.BorderSizePixel, label.Text, label.Font, label.TextSize, label.TextColor3, label.TextXAlignment, label.LayoutOrder, label.Parent, label.Position, label.TextTransparency = UDim2.new(0, 0, 0, 14), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, display .. "  ", Enum.Font.GothamBold, textSize, Color3.new(1, 1, 1), Enum.TextXAlignment.Right, i, StatusPanel, UDim2.new(0, 20, 0, 14), 1
+        label.Size, label.AutomaticSize, label.BackgroundTransparency, label.BackgroundColor3, label.BorderSizePixel, label.Text, label.Font, label.TextSize, label.TextColor3, label.TextXAlignment, label.LayoutOrder, label.Parent, label.Position, label.TextTransparency = UDim2.new(0, 0, 0, 14), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, name .. "  ", Enum.Font.GothamBold, 10, Color3.new(1, 1, 1), Enum.TextXAlignment.Right, i, StatusPanel, UDim2.new(0, 20, 0, 14), 1
         applyDreamyGradient(label)
         TweenService:Create(label, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Position = UDim2.new(0, 0, 0, 14), TextTransparency = 0}):Play()
     end
@@ -952,7 +950,6 @@ local function updateUISizes()
     end
     local mainScroll = MainFrame:FindFirstChildOfClass("ScrollingFrame")
     if mainScroll then mainScroll.Size = UDim2.new(1, 0, 1, -BAR_HEIGHT) end
-    updateFontSizes()
 end
 
 local function updateAllThemes()
@@ -1015,19 +1012,15 @@ end
 
 local function createTitleBar(parent, text)
     local bar = Instance.new("TextButton")
-    local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
-    local fontSize = math.floor(BASE_FONT_SIZE * 1.2 * scale)
-    bar.Size, bar.BorderSizePixel, bar.Text, bar.Font, bar.TextSize, bar.TextColor3, bar.Parent = UDim2.new(1, 0, 0, BAR_HEIGHT), 0, text, Enum.Font.GothamBold, fontSize, getThemeTextColor(), parent
+    bar.Size, bar.BorderSizePixel, bar.Text, bar.Font, bar.TextSize, bar.TextColor3, bar.Parent = UDim2.new(1, 0, 0, BAR_HEIGHT), 0, text, Enum.Font.GothamBold, 8, getThemeTextColor(), parent
     applyThemeColors(bar, true)
     table.insert(AllTitles, bar)
     return bar
 end
 
-local function createFeatureButton(parent, internalName, isCategory, clickCallback, isAction)
+local function createFeatureButton(parent, name, isCategory, clickCallback, isAction)
     local btn = Instance.new("TextButton")
-    local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
-    local fontSize = math.floor(BASE_FONT_SIZE * scale)
-    btn.Size, btn.BackgroundTransparency, btn.Text, btn.Font, btn.TextSize, btn.TextColor3, btn.BorderSizePixel, btn.Parent = UDim2.new(1, 0, 0, BAR_HEIGHT), 1, internalName, Enum.Font.Gotham, fontSize, getThemeTextColor(), 0, parent
+    btn.Size, btn.BackgroundTransparency, btn.Text, btn.Font, btn.TextSize, btn.TextColor3, btn.BorderSizePixel, btn.Parent = UDim2.new(1, 0, 0, BAR_HEIGHT), 1, name, Enum.Font.Gotham, 8, getThemeTextColor(), 0, parent
     table.insert(AllButtons, btn)
     applyDreamyGradient(btn)
     btn.MouseButton1Click:Connect(function()
@@ -1036,13 +1029,13 @@ local function createFeatureButton(parent, internalName, isCategory, clickCallba
             TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundTransparency = 0.5, BackgroundColor3 = TARGET_BLACK}):Play()
             delay(0.1, function() TweenService:Create(btn, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play() end)
         elseif isCategory then
-            CategoryStates[internalName] = not CategoryStates[internalName]
-            local s = CategoryStates[internalName]
+            CategoryStates[name] = not CategoryStates[name]
+            local s = CategoryStates[name]
             TweenService:Create(btn, TweenInfo.new(0.3, Enum.EasingStyle.Back), {BackgroundTransparency = s and 0.6 or 1, BackgroundColor3 = s and TARGET_BLACK or Color3.new(0,0,0)}):Play()
             if clickCallback then clickCallback() end
         else
-            FeatureStates[internalName] = not FeatureStates[internalName]
-            local s = FeatureStates[internalName]
+            FeatureStates[name] = not FeatureStates[name]
+            local s = FeatureStates[name]
             TweenService:Create(btn, TweenInfo.new(0.3, Enum.EasingStyle.Back), {BackgroundTransparency = s and 0.6 or 1, BackgroundColor3 = s and TARGET_BLACK or Color3.new(0,0,0)}):Play()
             updateStatusPanel()
             if clickCallback then clickCallback() end 
@@ -1067,187 +1060,83 @@ local function toggleSubUI(name)
     else table.insert(ActiveSubUIs, target) if MainFrame.Visible then target.Visible = true end end
 end
 
--- 肘击光环配置（需要保留肘击功能）
-local ELBOW_CONFIGS = {
-    ["工兵斧"] = {weapon = "Axe", range = 14, delay = 0.10},
-    ["卡宾枪"] = {weapon = "Carbine", range = 14, delay = 0.10}
-}
-local lastElbowTimes = {}
-local function getElbowRemote(weaponName)
-    local tool = LocalPlayer.Backpack:FindFirstChild(weaponName) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(weaponName))
-    return tool and tool:FindFirstChild("RemoteEvent")
-end
-local function findElbowTarget(range)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local zombies = workspace:FindFirstChild("Zombies")
-    if not hrp or not zombies then return nil end
-    local closest, dist = nil, range
-    for _, z in pairs(zombies:GetChildren()) do
-        if z:IsA("Model") and not z:FindFirstChild("Barrel", true) and z.Name ~= "m_Zombie" then
-            local zHrp = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso")
-            local hum = z:FindFirstChildOfClass("Humanoid")
-            if zHrp and hum and hum.Health > 0 then
-                local d = (hrp.Position - zHrp.Position).Magnitude
-                if d < dist then closest = z; dist = d end
-            end
-        end
-    end
-    return closest
-end
-local function attackElbow(target, weaponType, lastTime, delay)
-    local now = tick()
-    if now - lastTime < delay then return lastTime end
-    local remote = getElbowRemote(weaponType == "工兵斧" and "Axe" or "Carbine")
-    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local tRoot = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Head")
-    if not remote or not root or not tRoot then return lastTime end
-    pcall(function()
-        if weaponType == "工兵斧" then
-            remote:FireServer("Equip", root); remote:FireServer("BraceBlock"); remote:FireServer("FeedbackStun", target, tRoot.Position); remote:FireServer("StopBraceBlock")
-        else
-            remote:FireServer("Shove"); remote:FireServer("FeedbackStun", target, tRoot.Position)
-        end
-    end)
-    return now
-end
--- 在心跳中添加肘击逻辑（原有）
-RunService.Heartbeat:Connect(function()
-    for weaponType, config in pairs(ELBOW_CONFIGS) do
-        if activeStates["肘击_" .. weaponType] then
-            local target = findElbowTarget(config.range)
-            if target then
-                lastElbowTimes[weaponType] = attackElbow(target, weaponType, lastElbowTimes[weaponType] or 0, config.delay)
-            end
-        end
-    end
-end)
-
 local function createSubWindow(name, items)
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
-    local titleMap = {Combat="战斗", Movement="移动", Visuals="视觉效果", Player="玩家"}
-    local subTitle = createTitleBar(sub, titleMap[name] or name)
+    local subTitle = createTitleBar(sub, name)
     local subScroll = Instance.new("ScrollingFrame")
     subScroll.Size, subScroll.Position, subScroll.BackgroundTransparency, subScroll.ScrollBarThickness, subScroll.Parent = UDim2.new(1, 0, 1, -BAR_HEIGHT), UDim2.new(0, 0, 0, BAR_HEIGHT), 1, 0, sub
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
     
     if name == "Combat" then
-        -- 杀戮光环（核心杀戮、自动朝向、挥刀跳、自动装备）
-        local killBtn = createFeatureButton(subScroll, "核心杀戮", false, function() CFG.JUMP_ON = FeatureStates["核心杀戮"] end)
-        killBtn.Text = "核心杀戮"
-        local autoFace = createFeatureButton(subScroll, "自动朝向", false, function() CFG.AUTO_FACE_ON = FeatureStates["自动朝向"] end)
-        autoFace.Text = "自动朝向"
-        local jumpSwing = createFeatureButton(subScroll, "挥刀跳", false, function() CFG.JUMP_ON = FeatureStates["挥刀跳"] end)
-        jumpSwing.Text = "挥刀跳"
-        local autoEquip = createFeatureButton(subScroll, "自动装备", false, function() CFG.AUTO_EQUIP_ON = FeatureStates["自动装备"] end)
-        autoEquip.Text = "自动装备"
+        -- 原有跳跃攻击容器
+        local jumpContainer = Instance.new("Frame")
+        jumpContainer.Size, jumpContainer.BackgroundTransparency, jumpContainer.ClipsDescendants, jumpContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
+        Instance.new("UIListLayout", jumpContainer).SortOrder = Enum.SortOrder.LayoutOrder
+        createFeatureButton(subScroll, "Swing Jump", false, function() local s = FeatureStates["Swing Jump"] CFG.JUMP_ON = s TweenService:Create(jumpContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 150) or UDim2.new(1, 0, 0, 0)}):Play() end)
+        createFeatureButton(jumpContainer, "Auto Face", true, function() CFG.AUTO_FACE_ON = CategoryStates["Auto Face"] end)
+        createFeatureButton(jumpContainer, "Face Bomber", true, function() CFG.FACE_BOMBER = CategoryStates["Face Bomber"] end)
+        createFeatureButton(jumpContainer, "Wall Check", true, function() CFG.WALL_CHECK = CategoryStates["Wall Check"] end)
+        createFeatureButton(jumpContainer, "Show Range", true, function() CFG.SHOW_RANGE = CategoryStates["Show Range"] end)
+        createFeatureButton(jumpContainer, "Dist +", false, function() CFG.SCAN_DIST = math.min(CFG.SCAN_DIST + 5, 100) end, true)
+        createFeatureButton(jumpContainer, "Dist -", false, function() CFG.SCAN_DIST = math.max(CFG.SCAN_DIST - 5, 5) end, true)
+        createFeatureButton(jumpContainer, "Offset +", false, function() CFG.LEFT_OFFSET = CFG.LEFT_OFFSET + 1 end, true)
+        createFeatureButton(jumpContainer, "Offset -", false, function() CFG.LEFT_OFFSET = CFG.LEFT_OFFSET - 1 end, true)
         
         -- 刺刀辅助容器
-        local bayoContainer = Instance.new("Frame")
-        bayoContainer.Size, bayoContainer.BackgroundTransparency, bayoContainer.ClipsDescendants, bayoContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
-        Instance.new("UIListLayout", bayoContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local bayoBtn = createFeatureButton(subScroll, "刺刀辅助", false, function() local s = FeatureStates["刺刀辅助"] CFG.BAYONET_ON = s TweenService:Create(bayoContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 100) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        bayoBtn.Text = "刺刀辅助"
-        local bayoWall = createFeatureButton(bayoContainer, "刺刀墙体检测", false, function() CFG.BAYONET_WALL_CHECK = FeatureStates["刺刀墙体检测"] end)
-        bayoWall.Text = "刺刀墙体检测"
-        local bayoRange = createFeatureButton(bayoContainer, "刺刀显示范围", false, function() CFG.BAYONET_SHOW_RANGE = FeatureStates["刺刀显示范围"] end)
-        bayoRange.Text = "刺刀显示范围"
-        local bayoFace = createFeatureButton(bayoContainer, "刺刀瞄准炸弹兵", false, function() CFG.BAYONET_FACE_BOMBER = FeatureStates["刺刀瞄准炸弹兵"] end)
-        bayoFace.Text = "刺刀瞄准炸弹兵"
-        
+        local bayonetContainer = Instance.new("Frame")
+        bayonetContainer.Size, bayonetContainer.BackgroundTransparency, bayonetContainer.ClipsDescendants, bayonetContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
+        Instance.new("UIListLayout", bayonetContainer).SortOrder = Enum.SortOrder.LayoutOrder
+        createFeatureButton(subScroll, "Bayonet Assist", false, function() local s = FeatureStates["Bayonet Assist"] CFG.BAYONET_ON = s TweenService:Create(bayonetContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 60) or UDim2.new(1, 0, 0, 0)}):Play() end)
+        createFeatureButton(bayonetContainer, "Show Range", true, function() CFG.BAYONET_SHOW_RANGE = CategoryStates["Show Range"] end)
+        createFeatureButton(bayonetContainer, "Wall Check", true, function() CFG.BAYONET_WALL_CHECK = CategoryStates["Wall Check"] end)
+        createFeatureButton(bayonetContainer, "Aim Bomber", true, function() CFG.BAYONET_FACE_BOMBER = CategoryStates["Aim Bomber"] end)
+
         -- 枪械模组容器
         local gunContainer = Instance.new("Frame")
         gunContainer.Size, gunContainer.BackgroundTransparency, gunContainer.ClipsDescendants, gunContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", gunContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local gunBtn = createFeatureButton(subScroll, "枪械模组", false, function() local s = FeatureStates["枪械模组"] TweenService:Create(gunContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 200) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        gunBtn.Text = "枪械模组"
-        local autoShoot = createFeatureButton(gunContainer, "自动射击", false, function() CFG.AUTO_SHOOT = FeatureStates["自动射击"] end)
-        autoShoot.Text = "自动射击"
-        local silentAim = createFeatureButton(gunContainer, "静默瞄准", false, function() CFG.SILENT_AIM = FeatureStates["静默瞄准"] end)
-        silentAim.Text = "静默瞄准"
-        local instaShoot = createFeatureButton(gunContainer, "瞬间射击", false, function() CFG.INSTANT_SHOOT = FeatureStates["瞬间射击"] end)
-        instaShoot.Text = "瞬间射击"
-        local autoReload = createFeatureButton(gunContainer, "自动装填", false, function() CFG.AUTO_RELOAD = FeatureStates["自动装填"] end)
-        autoReload.Text = "自动装填"
-        local gunWall = createFeatureButton(gunContainer, "墙体检测", false, function() CFG.GUN_WALL_CHECK = FeatureStates["墙体检测"] end)
-        gunWall.Text = "墙体检测"
-        local useFov = createFeatureButton(gunContainer, "使用视野", false, function() CFG.USE_FOV = FeatureStates["使用视野"] end)
-        useFov.Text = "使用视野"
-        local showFov = createFeatureButton(gunContainer, "显示视野圈", false, function() CFG.SHOW_FOV = FeatureStates["显示视野圈"] end)
-        showFov.Text = "显示视野圈"
-        local fovPlus = createFeatureButton(gunContainer, "视野圈 +", false, function() CFG.FOV_SIZE = math.min(CFG.FOV_SIZE+5, 120) end, true)
-        fovPlus.Text = "视野圈 +"
-        local fovMinus = createFeatureButton(gunContainer, "视野圈 -", false, function() CFG.FOV_SIZE = math.max(CFG.FOV_SIZE-5, 10) end, true)
-        fovMinus.Text = "视野圈 -"
-        local mortar = createFeatureButton(gunContainer, "迫击炮时机", false, function() CFG.HAND_MORTAR_TIMING = FeatureStates["迫击炮时机"] end)
-        mortar.Text = "迫击炮时机"
-        
-        -- 肘击光环容器
+        createFeatureButton(subScroll, "Gun Mods", false, function() 
+            local s = FeatureStates["Gun Mods"] 
+            TweenService:Create(gunContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 180) or UDim2.new(1, 0, 0, 0)}):Play() 
+        end)
+        createFeatureButton(gunContainer, "Auto Shoot", true, function() CFG.AUTO_SHOOT = CategoryStates["Auto Shoot"] end)
+        createFeatureButton(gunContainer, "Silent Aim", true, function() CFG.SILENT_AIM = CategoryStates["Silent Aim"] end)
+        createFeatureButton(gunContainer, "Insta Shoot", true, function() CFG.INSTANT_SHOOT = CategoryStates["Insta Shoot"] end)
+        createFeatureButton(gunContainer, "Auto Reload", true, function() CFG.AUTO_RELOAD = CategoryStates["Auto Reload"] end)
+        createFeatureButton(gunContainer, "Wall Check", true, function() CFG.GUN_WALL_CHECK = CategoryStates["Wall Check"] end)
+        createFeatureButton(gunContainer, "Use FOV", true, function() CFG.USE_FOV = CategoryStates["Use FOV"] end)
+        createFeatureButton(gunContainer, "Show FOV", true, function() CFG.SHOW_FOV = CategoryStates["Show FOV"] end)
+        createFeatureButton(gunContainer, "FOV +", false, function() CFG.FOV_SIZE = math.min(CFG.FOV_SIZE + 5, 120) end, true)
+        createFeatureButton(gunContainer, "FOV -", false, function() CFG.FOV_SIZE = math.max(CFG.FOV_SIZE - 5, 10) end, true)
+        createFeatureButton(gunContainer, "Mortar Time", true, function() CFG.HAND_MORTAR_TIMING = CategoryStates["Mortar Time"] end)
+
+        -- 新增：肘击光环容器
         local elbowContainer = Instance.new("Frame")
         elbowContainer.Size, elbowContainer.BackgroundTransparency, elbowContainer.ClipsDescendants, elbowContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", elbowContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local elbowBtn = createFeatureButton(subScroll, "肘击光环", false, function() local s = FeatureStates["肘击光环"] TweenService:Create(elbowContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 60) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        elbowBtn.Text = "肘击光环"
-        local elbow1 = createFeatureButton(elbowContainer, "工兵斧肘击", false, function() activeStates["肘击_工兵斧"] = FeatureStates["工兵斧肘击"] end)
-        elbow1.Text = "工兵斧肘击"
-        local elbow2 = createFeatureButton(elbowContainer, "卡宾枪肘击", false, function() activeStates["肘击_卡宾枪"] = FeatureStates["卡宾枪肘击"] end)
-        elbow2.Text = "卡宾枪肘击"
+        createFeatureButton(subScroll, "Elbow Assist", false, function() 
+            local s = FeatureStates["Elbow Assist"] 
+            TweenService:Create(elbowContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 60) or UDim2.new(1, 0, 0, 0)}):Play() 
+        end)
+        createFeatureButton(elbowContainer, "工兵斧肘击", true, function() activeStates["肘击_工兵斧"] = CategoryStates["工兵斧肘击"] end)
+        createFeatureButton(elbowContainer, "卡宾枪肘击", true, function() activeStates["肘击_卡宾枪"] = CategoryStates["卡宾枪肘击"] end)
     end
-    
+
     if name == "Visuals" then
-        -- 全图高亮已单独放在主面板，这里放僵尸透视
         local espContainer = Instance.new("Frame")
         espContainer.Size, espContainer.BackgroundTransparency, espContainer.ClipsDescendants, espContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", espContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local espBtn = createFeatureButton(subScroll, "僵尸透视", false, function() local s = FeatureStates["僵尸透视"] TweenService:Create(espContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 180) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        espBtn.Text = "僵尸透视"
-        local espNames = {Bomber="炸弹兵", Igniter="点火者", Zapper="电击者", Runner="跑者", Cuirassier="胸甲骑兵"}
-        for eng, ch in pairs(espNames) do
-            local btn = createFeatureButton(espContainer, eng, false, function() activeStates[eng] = FeatureStates[eng] end)
-            btn.Text = ch
-        end
-        local alertBtn = createFeatureButton(espContainer, "炸弹兵警报", false, function() activeStates["BomberAlert"] = FeatureStates["炸弹兵警报"] end)
-        alertBtn.Text = "炸弹兵警报"
+        createFeatureButton(subScroll, "Zombie ESP", false, function() local s = FeatureStates["Zombie ESP"] TweenService:Create(espContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 180) or UDim2.new(1, 0, 0, 0)}):Play() end)
+        local sortedESP = {"Bomber", "Igniter", "Zapper", "Runner", "Cuirassier"}
+        for _, espName in ipairs(sortedESP) do createFeatureButton(espContainer, espName, true, function() activeStates[espName] = CategoryStates[espName] end) end
+        createFeatureButton(espContainer, "Bomber Alert", true, function() activeStates["BomberAlert"] = CategoryStates["Bomber Alert"] end)
     end
-    
-    if name == "Movement" then
-        -- Speed 增强（带滑块）
-        local speedContainer = Instance.new("Frame")
-        speedContainer.Size, speedContainer.BackgroundTransparency, speedContainer.ClipsDescendants, speedContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
-        Instance.new("UIListLayout", speedContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        local speedMain = createFeatureButton(subScroll, "Speed 增强", false, function()
-            local s = FeatureStates["Speed 增强"]
-            CFG.SPEED_ENABLED = s
-            TweenService:Create(speedContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 45) or UDim2.new(1, 0, 0, 0)}):Play()
-        end)
-        speedMain.Text = "Speed 增强"
-        local speedSliderFrame = Instance.new("Frame")
-        speedSliderFrame.Size, speedSliderFrame.BackgroundTransparency, speedSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, speedContainer
-        local speedLabel = Instance.new("TextLabel")
-        speedLabel.Size, speedLabel.BackgroundTransparency, speedLabel.Text, speedLabel.TextColor3, speedLabel.TextSize, speedLabel.Font, speedLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "Speed: " .. CFG.SPEED_VALUE, Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
-        local speedBox = Instance.new("TextBox")
-        speedBox.Size, speedBox.Position, speedBox.BackgroundTransparency, speedBox.Text, speedBox.TextColor3, speedBox.TextSize, speedBox.Font, speedBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.SPEED_VALUE), Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
-        speedBox.FocusLost:Connect(function()
-            local val = tonumber(speedBox.Text)
-            if val then
-                val = math.clamp(val, 16, 250)
-                CFG.SPEED_VALUE = val
-                speedBox.Text = tostring(val)
-                speedLabel.Text = "Speed: " .. val
-                if CFG.SPEED_ENABLED then
-                    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-                    if hum then hum.WalkSpeed = val end
-                end
-            else
-                speedBox.Text = tostring(CFG.SPEED_VALUE)
-            end
-        end)
-    end
-    
+
+    -- 新增 Player 分类
     if name == "Player" then
-        -- 无敌（碰飞）
-        local wudiBtn = createFeatureButton(subScroll, "无敌(碰飞)", false, function()
+        -- 无敌(碰飞)
+        createFeatureButton(subScroll, "无敌(碰飞)", false, function() 
             CFG.WUDI_ON = FeatureStates["无敌(碰飞)"]
             if not CFG.WUDI_ON then
                 wudiTargetPlayer = nil
@@ -1255,20 +1144,15 @@ local function createSubWindow(name, items)
                 if hum then hum:Move(Vector3.zero) end
             end
         end)
-        wudiBtn.Text = "无敌(碰飞)"
         -- 飞行绕过（点击后弹出独立UI）
-        local flyBtn = createFeatureButton(subScroll, "飞行绕过", false, function()
+        createFeatureButton(subScroll, "飞行绕过", false, function()
             if FeatureStates["飞行绕过"] then
                 createFlyUI()
             end
         end)
-        flyBtn.Text = "飞行绕过"
     end
-    
-    for _, v in ipairs(items) do
-        local btn = createFeatureButton(subScroll, v, false)
-        btn.Text = v
-    end
+
+    for _, v in ipairs(items) do createFeatureButton(subScroll, v, false) end
     setupDraggableAndToggle(sub, subTitle, subScroll, false)
     SubUIFrames[name] = sub
 end
@@ -1285,144 +1169,71 @@ local function createSettingSub()
     local name = "UI Setup"
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
-    local subTitle = createTitleBar(sub, "界面设置")
+    local subTitle = createTitleBar(sub, name)
     local subScroll = Instance.new("ScrollingFrame")
     subScroll.Size, subScroll.Position, subScroll.BackgroundTransparency, subScroll.ScrollBarThickness, subScroll.Parent = UDim2.new(1, 0, 1, -BAR_HEIGHT), UDim2.new(0, 0, 0, BAR_HEIGHT), 1, 0, sub
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
-    local showStatusBtn = createFeatureButton(subScroll, "显示状态", true, function() ShowStatus = not ShowStatus updateStatusPanel() end)
-    showStatusBtn.Text = "显示状态"
-    local freeDragBtn = createFeatureButton(subScroll, "自由拖拽", true, function() LockSubUIs = not LockSubUIs end)
-    freeDragBtn.Text = "自由拖拽"
-    local rainbowBtn = createFeatureButton(subScroll, "彩虹标题", true, function() UseRainbowTitle = not UseRainbowTitle updateAllThemes() end)
-    rainbowBtn.Text = "彩虹标题"
-    local textFadeBtn = createFeatureButton(subScroll, "文字渐变", true, function() UseTextGradient = not UseTextGradient end)
-    textFadeBtn.Text = "文字渐变"
+    createFeatureButton(subScroll, "Show Status", true, function() ShowStatus = not ShowStatus updateStatusPanel() end)
+    createFeatureButton(subScroll, "Free Drag", true, function() LockSubUIs = not LockSubUIs end)
+    createFeatureButton(subScroll, "Rainbow Tag", true, function() UseRainbowTitle = not UseRainbowTitle updateAllThemes() end)
+    createFeatureButton(subScroll, "Text Fade", true, function() UseTextGradient = not UseTextGradient end)
     local resizeContainer = Instance.new("Frame")
     resizeContainer.Name, resizeContainer.Size, resizeContainer.BackgroundTransparency, resizeContainer.ClipsDescendants, resizeContainer.Parent = "ResizeSection", UDim2.new(1, 0, 0, 0), 1, true, subScroll
-    local resizeUIBtn = createFeatureButton(subScroll, "调整界面大小", true, function() local s = CategoryStates["调整界面大小"] ResizeHandle.Visible = s TweenService:Create(resizeContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, BAR_HEIGHT) or UDim2.new(1, 0, 0, 0)}):Play() end)
-    resizeUIBtn.Text = "调整界面大小"
-    local resetSizeBtn = createFeatureButton(resizeContainer, "重置尺寸", false, function() UI_WIDTH, UI_HEIGHT = 90, 160 updateUISizes() end, true)
-    resetSizeBtn.Text = "重置尺寸"
+    createFeatureButton(subScroll, "Resize UI", true, function() local s = CategoryStates["Resize UI"] ResizeHandle.Visible = s TweenService:Create(resizeContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, BAR_HEIGHT) or UDim2.new(1, 0, 0, 0)}):Play() end)
+    createFeatureButton(resizeContainer, "Reset Size", false, function() UI_WIDTH, UI_HEIGHT = 90, 160 updateUISizes() end, true)
     local styleContainer = Instance.new("Frame")
     styleContainer.Size, styleContainer.BackgroundTransparency, styleContainer.ClipsDescendants, styleContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
     Instance.new("UIListLayout", styleContainer).SortOrder = Enum.SortOrder.LayoutOrder
-    local themesBtn = createFeatureButton(subScroll, "主题", true, function() TweenService:Create(styleContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = CategoryStates["主题"] and UDim2.new(1, 0, 0, 90) or UDim2.new(1, 0, 0, 0)}):Play() end)
-    themesBtn.Text = "主题"
+    createFeatureButton(subScroll, "Themes", true, function() TweenService:Create(styleContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = CategoryStates["Themes"] and UDim2.new(1, 0, 0, 90) or UDim2.new(1, 0, 0, 0)}):Play() end)
     styleContainer.LayoutOrder = 99
-    local themes = {["Dark"]="暗黑", ["Glass"]="玻璃", ["Neon"]="霓虹", ["Midnight"]="午夜", ["DeepSea"]="深海"}
-    for n, display in pairs(themes) do
-        local themeBtn = createFeatureButton(styleContainer, n, true, function() if CategoryStates[n] then CurrentTheme = n for k, _ in pairs(themes) do if k ~= n then CategoryStates[k] = false end end else CurrentTheme = "Dark" end updateAllThemes() end)
-        themeBtn.Text = display
-    end
+    local themes = {["Dark"]="Dark", ["Glass"]="Glass", ["Neon"]="Neon", ["Midnight"]="Midnight", ["DeepSea"]="DeepSea"}
+    for n, v in pairs(themes) do createFeatureButton(styleContainer, n, true, function() if CategoryStates[n] then CurrentTheme = v for k, _ in pairs(themes) do if k ~= n then CategoryStates[k] = false end end else CurrentTheme = "Dark" end updateAllThemes() end) end
     setupDraggableAndToggle(sub, subTitle, subScroll, false)
     SubUIFrames[name] = sub
 end
 
--- 主面板上的全图高亮和LoopSpeed
-local fullBrightBtn = createFeatureButton(list, "全图高亮", false, function() FULL_BRIGHT_ON = FeatureStates["全图高亮"] end)
-fullBrightBtn.Text = "全图高亮"
--- LoopSpeed滑块（放在主面板）
-local speedFrameMain = Instance.new("Frame", list)
-speedFrameMain.Size = UDim2.new(0.95, 0, 0, 40)
-speedFrameMain.BackgroundColor3 = Color3.fromRGB(35,35,45)
-Instance.new("UICorner", speedFrameMain)
-local speedLabelMain = Instance.new("TextLabel", speedFrameMain)
-speedLabelMain.Size = UDim2.new(1,0,0,18)
-speedLabelMain.BackgroundTransparency = 1
-speedLabelMain.Text = "LoopSpeed: 16"
-speedLabelMain.TextColor3 = Color3.new(1,1,1)
-speedLabelMain.Font = Enum.Font.SourceSansBold
-speedLabelMain.TextSize = 11
-local speedSliderMain = Instance.new("Frame", speedFrameMain)
-speedSliderMain.Size = UDim2.new(0.8, 0, 0, 4)
-speedSliderMain.Position = UDim2.new(0.1, 0, 0.7, 0)
-speedSliderMain.BackgroundColor3 = Color3.fromRGB(60,60,70)
-local speedDotMain = Instance.new("TextButton", speedSliderMain)
-speedDotMain.Size = UDim2.new(0, 10, 0, 10)
-speedDotMain.Position = UDim2.new(0, 0, 0.5, -5)
-speedDotMain.BackgroundColor3 = Color3.fromRGB(100,100,255)
-speedDotMain.Text = ""
-Instance.new("UICorner", speedDotMain).CornerRadius = UDim.new(1,0)
-local function updateSpeedMain(input)
-    local pos = math.clamp((input.Position.X - speedSliderMain.AbsolutePosition.X) / speedSliderMain.AbsoluteSize.X, 0, 1)
-    speedDotMain.Position = UDim2.new(pos, -5, 0.5, -5)
-    LOOP_SPEED_VAL = math.floor(16 + (pos * 100))
-    speedLabelMain.Text = "LoopSpeed: " .. tostring(LOOP_SPEED_VAL)
+RunService.RenderStepped:Connect(function()
+    local color = Color3.fromHSV(tick() % 5 / 5, 0.7, 1)
+    for _, s in ipairs(UIStrokes) do if s and s.Parent then s.Color = color end end
+    if UseRainbowTitle then local rainbow = Color3.fromHSV(tick() % 3 / 3, 0.8, 1) for _, t in ipairs(AllTitles) do t.TextColor3 = rainbow end end
+    if MainFrame.Visible then
+        local currentX, lastSub = 4, nil
+        for _, sub in ipairs(ActiveSubUIs) do sub.Visible = true if LockSubUIs then sub.Position = UDim2.new(MainFrame.Position.X.Scale, MainFrame.Position.X.Offset + UI_WIDTH + currentX, MainFrame.Position.Y.Scale, MainFrame.Position.Y.Offset) currentX = currentX + UI_WIDTH + 4 end if sub.Visible and sub.Size.Y.Offset > BAR_HEIGHT + 5 then lastSub = sub end end
+        if ResizeHandle.Visible then ResizeHandle.Parent, ResizeHandle.Position = lastSub or MainFrame, UDim2.new(1, 0, 1, 0) end
+    else for _, sub in ipairs(ActiveSubUIs) do sub.Visible = false end ResizeHandle.Parent = nil end
+end)
+
+local MainButton = Instance.new("TextButton")
+MainButton.Parent, MainButton.BackgroundColor3, MainButton.Size, MainButton.Position, MainButton.Text, MainButton.Font, MainButton.TextColor3, MainButton.TextSize = ScreenGui, Color3.new(0.04,0.04,0.04), UDim2.fromOffset(35, 35), UDim2.new(0.05, 0, 0.4, 0), "S", Enum.Font.GothamBold, Color3.new(1,1,1), 16
+local MBStroke = Instance.new("UIStroke")
+MBStroke.Thickness, MBStroke.Color, MBStroke.Parent = 1, Color3.fromRGB(80, 80, 80), MainButton
+
+local function initMainButtonDragging()
+    local bDrag, bMoved, bS, bPS = false, false
+    MainButton.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then bDrag, bMoved, bS, bPS = true, false, i.Position, MainButton.Position end end)
+    UserInputService.InputChanged:Connect(function(i) if bDrag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then local d = i.Position - bS if d.Magnitude > 5 then bMoved = true end MainButton.Position = UDim2.new(bPS.X.Scale, bPS.X.Offset + d.X, bPS.Y.Scale, bPS.Y.Offset + d.Y) end end)
+    UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then if bDrag then bDrag = false if not bMoved then MainFrame.Visible = not MainFrame.Visible TweenService:Create(Blur, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Size = MainFrame.Visible and 14 or 0}):Play() else MainButton.Position = (MainButton.AbsolutePosition.X < ScreenGui.AbsoluteSize.X/2) and UDim2.new(0, 5, MainButton.Position.Y.Scale, MainButton.Position.Y.Offset) or UDim2.new(1, -40, MainButton.Position.Y.Scale, MainButton.Position.Y.Offset) end end end end)
 end
-local speedDraggingMain = false
-speedDotMain.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then speedDraggingMain = true end end)
-UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then speedDraggingMain = false end end)
-UserInputService.InputChanged:Connect(function(input) if speedDraggingMain and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then updateSpeedMain(input) end end)
 
--- 作者标签
-local authorLabel = Instance.new("TextLabel", list)
-authorLabel.Size = UDim2.new(0.95, 0, 0, 20)
-authorLabel.BackgroundTransparency = 1
-authorLabel.Text = "作者：TrackMaker + 飞行绕过"
-authorLabel.TextColor3 = Color3.new(0.6,0.6,0.8)
-authorLabel.Font = Enum.Font.SourceSansItalic
-authorLabel.TextSize = 12
-
--- 主菜单按钮
-local MainButton = Instance.new("TextButton", ScreenGui)
-MainButton.Size = UDim2.fromOffset(35, 35)
-MainButton.Position = UDim2.new(0.05, 0, 0.4, 0)
-MainButton.BackgroundColor3 = Color3.fromRGB(10,10,10)
-MainButton.Text = "S"
-MainButton.TextColor3 = Color3.new(1,1,1)
-MainButton.Font = Enum.Font.GothamBold
-MainButton.TextSize = 18
-local MBStroke = Instance.new("UIStroke", MainButton)
-MBStroke.Color = Color3.fromRGB(200,200,200)
-MBStroke.Thickness = 1
-
-local mainFrameVisible = true
-MainButton.MouseButton1Click:Connect(function()
-    mainFrameVisible = not mainFrameVisible
-    MainFrame.Visible = mainFrameVisible
-end)
-
--- 主菜单伸缩
-masterTitle.MouseButton1Click:Connect(function() 
-    local mExp = MainFrame.Size.Y.Offset > 50
-    TweenService:Create(MainFrame, TweenInfo.new(0.2), {Size = UDim2.new(0, 120, 0, mExp and 30 or 270)}):Play()
-end)
-
--- 创建子窗口
 local SubLists = {["Combat"] = {}, ["Movement"] = {}, ["Visuals"] = {}, ["Player"] = {}}
 local listOrder = {"Combat", "Movement", "Visuals", "Player", "UI Setup"}
-for _, c in ipairs(listOrder) do 
-    if c == "UI Setup" then 
-        createSettingSub() 
-    else 
-        createSubWindow(c, SubLists[c]) 
-    end 
-    local btn = createFeatureButton(MainContent, c, true, function() toggleSubUI(c) end)
-    local btnNames = {Combat="战斗", Movement="移动", Visuals="视觉效果", Player="玩家", ["UI Setup"]="界面设置"}
-    btn.Text = btnNames[c] or c
-end
+for _, c in ipairs(listOrder) do if c == "UI Setup" then createSettingSub() else createSubWindow(c, SubLists[c]) end createFeatureButton(MainContent, c, true, function() toggleSubUI(c) end) end
 
 initMainButtonDragging()
 initResizeLogic()
 updateAllThemes()
-updateFontSizes()
-MainFrame.Visible = true
 
--- 将全图高亮和LoopSpeed的开关正确绑定到变量
--- 注意：全图高亮和LoopSpeed已经在主循环中使用了 FULL_BRIGHT_ON 和 LOOP_SPEED_VAL，无需额外处理
--- 但需要将全图高亮按钮的 FeatureStates 同步到 FULL_BRIGHT_ON
-RunService.Heartbeat:Connect(function()
-    FULL_BRIGHT_ON = FeatureStates["全图高亮"] or false
-    if not FULL_BRIGHT_ON then
-        Lighting.Ambient = origAmbient
-        Lighting.OutdoorAmbient = origOutdoorAmbient
-        Lighting.Brightness = origBrightness
-        Lighting.ClockTime = origClockTime
-    else
-        Lighting.Ambient = Color3.new(1,1,1)
-        Lighting.OutdoorAmbient = Color3.new(1,1,1)
-        Lighting.Brightness = 2
-        Lighting.ClockTime = 14
+-- 肘击光环的心跳驱动（添加到原有 Heartbeat 中，但为避免重复，单独加一个循环）
+task.spawn(function()
+    while true do
+        for weaponType, config in pairs(ELBOW_CONFIGS) do
+            if activeStates["肘击_" .. weaponType] then
+                local target = findElbowTarget(config.range)
+                if target then
+                    lastElbowTimes[weaponType] = attackElbow(target, weaponType, lastElbowTimes[weaponType] or 0, config.delay)
+                end
+            end
+        end
+        task.wait(0.1)
     end
-    -- 移速控制已经在独立循环中处理，这里不再重复
 end)
