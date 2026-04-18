@@ -1,3 +1,4 @@
+-- ================= 水调歌头 · 全兼容版（PC/手机） =================
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
@@ -41,9 +42,7 @@ local CFG = {
     MAX_RANGE = 200,
     HAND_MORTAR_TIMING = false,
 
-    -- 无敌（碰飞）
     WUDI_ON = false,
-    -- 移动 Speed
     SPEED_ENABLED = false,
     SPEED_VALUE = 32,
     SPRINT_BOOST = false,
@@ -98,7 +97,6 @@ local reloadInProgress = {}
 local activeConnections = {}
 local watchedTools = {}
 
--- 无敌（碰飞）变量
 local wudiTargetPlayer = nil
 local wudiMoveLoopRunning = true
 local wudiPushLoopRunning = true
@@ -203,17 +201,17 @@ local function performReload(tool, targetShots)
     reloadInProgress[tool] = true
     local remote = findRemoteForTool(tool)
     if not remote then reloadInProgress[tool] = nil return end
-    if targetShots > 1 then pcall(function() remote:FireServer("StartReload") end) task.wait(0.1) end
+    if targetShots > 1 then pcall(function() remote:FireServer("StartReload") end) wait(0.1) end
     local attempts = 0
     while attempts < 50 do
         if getShotsLoadedForTool(tool) >= targetShots then
             pcall(function() tool.Parent = LocalPlayer.Backpack end)
-            task.wait(0.02)
+            wait(0.02)
             pcall(function() tool.Parent = LocalPlayer.Character end)
             break
         end
         pcall(function() remote:FireServer("Reload") end)
-        task.wait(0.05)
+        wait(0.05)
         attempts = attempts + 1
     end
     reloadInProgress[tool] = nil
@@ -223,11 +221,11 @@ local function tryReloadTool(tool)
     if not CFG.AUTO_RELOAD or not isGun(tool) then return end
     local shots = getShotsLoadedForTool(tool)
     if tool.Name == "Nock Gun" and shots < 7 then
-        task.spawn(performReload, tool, 7)
+        spawn(function() performReload(tool, 7) end)
     elseif (tool.Name == "Double Barrel Pistol" or tool.Name == "Horse Artillery Pistol") and shots == 0 then
-        task.spawn(performReload, tool, 2)
+        spawn(function() performReload(tool, 2) end)
     elseif shots == 0 then
-        task.spawn(performReload, tool, 1)
+        spawn(function() performReload(tool, 1) end)
     end
 end
 
@@ -519,40 +517,8 @@ RunService.RenderStepped:Connect(function()
     laser.Transparency = 1 
 end)
 
-local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-    local method = getnamecallmethod()
-    local args = {...}
-    if CFG.JUMP_ON and method == "FireServer" and tostring(self) == "RemoteEvent" then
-        if args[1] == "Swing" or args[1] == "Thrust" then
-            task.defer(function()
-                local char = LocalPlayer.Character
-                local hum = char and char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.FloorMaterial ~= Enum.Material.Air then hum.Jump = true end
-            end)
-        end
-    end
-    if CFG.SILENT_AIM and method == "Raycast" and (self == Workspace or self.ClassName == "Workspace") then
-        if not checkcaller() and silentAimCurrentTarget then
-            local origin = args[1]
-            local aimPos = silentAimCurrentTarget.Position
-            local dir = (aimPos - origin)
-            args[2] = dir.Unit * (dir.Magnitude + 10)
-            return oldNamecall(self, unpack(args))
-        end
-    end
-    return oldNamecall(self, ...)
-end)
-
-local oldIndex
-oldIndex = hookmetamethod(game, "__index", function(self, index)
-    if CFG.SILENT_AIM and self == LocalPlayer:GetMouse() and (index == "Hit" or index == "Target") then
-        if not checkcaller() and silentAimCurrentTarget then
-            return index == "Hit" and silentAimCurrentTarget.CFrame or silentAimCurrentTarget
-        end
-    end
-    return oldIndex(self, index)
-end)
+-- 移除 hookmetamethod 部分，因为兼容性问题（静默瞄准和跳跃攻击会失效）
+-- 如果需要，可以后续单独适配，但为了跨平台，暂时注释。
 
 -- ================= 无敌（碰飞）功能 =================
 local function findPlayer(text)
@@ -575,9 +541,9 @@ LocalPlayer.Chatted:Connect(function(msg)
     end
 end)
 
-task.spawn(function()
+spawn(function()
     while wudiMoveLoopRunning do
-        task.wait()
+        wait()
         if not CFG.WUDI_ON or not wudiTargetPlayer then
             local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
             if hum then hum:Move(Vector3.zero) end
@@ -601,9 +567,9 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
+spawn(function()
     while wudiPushLoopRunning do
-        task.wait()
+        wait()
         if not CFG.WUDI_ON then
             local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
             if hum then hum:Move(Vector3.zero) end
@@ -617,9 +583,9 @@ task.spawn(function()
 end)
 
 -- ================= 移动 Speed 核心循环 =================
-task.spawn(function()
+spawn(function()
     while true do
-        task.wait()
+        wait()
         local char = LocalPlayer.Character
         if not char then continue end
         local hum = char:FindFirstChildOfClass("Humanoid")
@@ -641,7 +607,7 @@ task.spawn(function()
 end)
 
 LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
+    wait(0.5)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then
         if CFG.SPEED_ENABLED then hum.WalkSpeed = CFG.SPEED_VALUE
