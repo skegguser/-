@@ -3,6 +3,8 @@ local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
+local GuiService = game:GetService("GuiService")
+local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -22,7 +24,22 @@ local CFG = {
     BAYONET_FACE_BOMBER = false,
     BAYONET_RANGE = 25,
     BAYONET_SMOOTH = 0.15,
-    BAYONET_BASE_HEIGHT = 0.8
+    BAYONET_BASE_HEIGHT = 0.8,
+
+    AUTO_SHOOT = false,
+    INSTANT_SHOOT = false,
+    AUTO_RELOAD = false,
+    SILENT_AIM = false,
+    SILENT_AIM_SAVE_PLAYERS = false,
+    AUTO_SAVE_PLAYERS = false,
+    INSTANT_SAVE_PLAYERS = false,
+    GUN_WALL_CHECK = true,
+    USE_FOV = false,
+    SHOW_FOV = false,
+    FOV_SIZE = 50,
+    PREDICTION = 0.2,
+    MAX_RANGE = 200,
+    HAND_MORTAR_TIMING = false
 }
 
 local activeStates = {}
@@ -32,27 +49,24 @@ local currentTarget = nil
 local ALERT_RANGE = 20
 
 local ESP_CONFIGS = {
-    ["自爆"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Torch", true) end, color = Color3.fromRGB(255, 230, 0), alert = true},
-    ["二师兄"] = {check = function(obj) return obj:IsA("Model") and obj.Name == "m_Zombie" and obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(0, 255, 150), alert = false},
-    ["红眼"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("E", true) and not obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(255, 50, 50), alert = false},
-    ["大师兄"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Axe", true) end, color = Color3.fromRGB(50, 150, 255), alert = false},
-    ["燃烧者"] = {check = function(obj) 
+    ["Bomber"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Torch", true) end, color = Color3.fromRGB(255, 230, 0), alert = true},
+    ["Cuirassier"] = {check = function(obj) return obj:IsA("Model") and obj.Name == "m_Zombie" and obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(0, 255, 150), alert = false},
+    ["Runner"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("E", true) and not obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(255, 50, 50), alert = false},
+    ["Zapper"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Axe", true) end, color = Color3.fromRGB(50, 150, 255), alert = false},
+    ["Igniter"] = {check = function(obj) 
         if not obj:IsA("Model") then return false end
         if persistentBurners[obj] then return true end
-        if obj:FindFirstChild("Whale Oil Lantern", true) then
-            persistentBurners[obj] = true
-            return true
-        end
+        if obj:FindFirstChild("Whale Oil Lantern", true) then persistentBurners[obj] = true return true end
         return false
     end, color = Color3.fromRGB(255, 120, 0), alert = false}
 }
 
 local BeamFolder = Instance.new("Folder", workspace)
-BeamFolder.Name = "ZZC_Beams"
+BeamFolder.Name = "ZzcHub_Beams"
 
 local function createBeam()
     local part = Instance.new("Part")
-    part.Name = "ZZC_Laser"
+    part.Name = "Zzc_Laser"
     part.Anchored = true
     part.CanCollide = false
     part.CanTouch = false
@@ -68,6 +82,207 @@ local laser = createBeam()
 local bayonetLaser = createBeam()
 bayonetLaser.Name = "BayonetLaser"
 
+local autoShootCurrentTarget = nil
+local silentAimCurrentTarget = nil
+local fovGui = nil
+local fovCircle = nil
+local reloadInProgress = {}
+local activeConnections = {}
+local watchedTools = {}
+
+local function ensureFovGui()
+    if fovGui and fovGui.Parent then return fovGui, fovCircle end
+    fovGui = Instance.new("ScreenGui", PlayerGui)
+    fovGui.Name = "Gun_FovGui"
+    fovGui.ResetOnSpawn = false
+    
+    local circle = Instance.new("Frame", fovGui)
+    circle.AnchorPoint = Vector2.new(0.5, 0.5)
+    circle.Position = UDim2.new(0.5, 0, 0.5, 0)
+    circle.BackgroundTransparency = 1
+    Instance.new("UICorner", circle).CornerRadius = UDim.new(1, 0)
+    local stroke = Instance.new("UIStroke", circle)
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(255, 255, 0)
+    stroke.Transparency = 0.2
+    fovCircle = circle
+    return fovGui, fovCircle
+end
+
+local function getFovScreenCenter()
+    local cam = Workspace.CurrentCamera
+    if not cam then return Vector2.new(0, 0) end
+    if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        return Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    end
+    local mousePos = UserInputService:GetMouseLocation()
+    local inset = GuiService:GetGuiInset()
+    return mousePos - Vector2.new(inset.X, inset.Y)
+end
+
+RunService.RenderStepped:Connect(function()
+    if CFG.SHOW_FOV and (CFG.AUTO_SHOOT or CFG.SILENT_AIM or CFG.AUTO_SAVE_PLAYERS) then
+        local gui, circle = ensureFovGui()
+        gui.Enabled = true
+        local cam = Workspace.CurrentCamera
+        if cam then
+            local sizePx = (math.clamp(CFG.FOV_SIZE, 10, 120) / 40) * 250
+            circle.Size = UDim2.new(0, sizePx, 0, sizePx)
+            local centerVec = getFovScreenCenter()
+            circle.Position = UDim2.new(centerVec.X / cam.ViewportSize.X, 0, centerVec.Y / cam.ViewportSize.Y, 0)
+        end
+    else
+        if fovGui then fovGui.Enabled = false end
+    end
+end)
+
+local function isWorldPosInFov(worldPos)
+    if not CFG.USE_FOV then return true end
+    local cam = Workspace.CurrentCamera
+    if not cam then return true end
+    local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
+    if not onScreen then return false end
+    local centerVec = getFovScreenCenter()
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerVec).Magnitude
+    local sizePx = (math.clamp(CFG.FOV_SIZE, 10, 120) / 40) * 250
+    return dist <= (sizePx / 2)
+end
+local function isGun(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    local animFolder = tool:FindFirstChild("Animations")
+    return animFolder and (animFolder:FindFirstChild("Aim") or animFolder:FindFirstChild("Aiming"))
+end
+
+local function getShotsLoadedForTool(tool)
+    if not tool then return 0 end
+    local s = tool:FindFirstChild("ShotsLoaded")
+    if s and (s:IsA("IntValue") or s:IsA("NumberValue")) then return s.Value end
+    return 0
+end
+
+local function findRemoteForTool(tool)
+    if not tool then return nil end
+    return tool:FindFirstChild("RemoteEvent")
+end
+
+local function hasClearShotOnPart(originPos, aimPart, targetModel)
+    if not CFG.GUN_WALL_CHECK then return true end
+    if not originPos or not aimPart then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {LocalPlayer.Character, targetModel, BeamFolder}
+    local dir = aimPart.Position - originPos
+    local result = workspace:Raycast(originPos, dir, params)
+    return result == nil
+end
+
+local function getPredictedAimPosition(part)
+    if not part then return nil end
+    local pos = part.Position
+    if CFG.PREDICTION <= 0 then return pos end
+    local vel = part.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
+    return pos + vel * CFG.PREDICTION
+end
+
+local function performReload(tool, targetShots)
+    if reloadInProgress[tool] then return end
+    reloadInProgress[tool] = true
+    local remote = findRemoteForTool(tool)
+    if not remote then reloadInProgress[tool] = nil return end
+    
+    if targetShots > 1 then pcall(function() remote:FireServer("StartReload") end) task.wait(0.1) end
+    
+    local attempts = 0
+    while attempts < 50 do
+        if getShotsLoadedForTool(tool) >= targetShots then
+            pcall(function() tool.Parent = LocalPlayer.Backpack end)
+            task.wait(0.02)
+            pcall(function() tool.Parent = LocalPlayer.Character end)
+            break
+        end
+        pcall(function() remote:FireServer("Reload") end)
+        task.wait(0.05)
+        attempts = attempts + 1
+    end
+    reloadInProgress[tool] = nil
+end
+
+local function tryReloadTool(tool)
+    if not CFG.AUTO_RELOAD or not isGun(tool) then return end
+    local shots = getShotsLoadedForTool(tool)
+    if tool.Name == "Nock Gun" and shots < 7 then
+        task.spawn(performReload, tool, 7)
+    elseif (tool.Name == "Double Barrel Pistol" or tool.Name == "Horse Artillery Pistol") and shots == 0 then
+        task.spawn(performReload, tool, 2)
+    elseif shots == 0 then
+        task.spawn(performReload, tool, 1)
+    end
+end
+
+local function getNearestZombie(range)
+    local cam = Workspace.CurrentCamera
+    local originPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and LocalPlayer.Character.Head.Position or cam.CFrame.Position
+    if not originPos then return nil end
+
+    local bestPart, bestModel, bestDist = nil, nil, range
+    local zombiesFolder = Workspace:FindFirstChild("Zombies")
+    if not zombiesFolder then return nil end
+
+    for _, model in ipairs(zombiesFolder:GetDescendants()) do
+        if model:IsA("Model") and not model:FindFirstChild("Spawn") then
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local aimPart = model:FindFirstChild("Head") or model:FindFirstChild("HumanoidRootPart")
+                if aimPart then
+                    local aimPos = getPredictedAimPosition(aimPart)
+                    if isWorldPosInFov(aimPos) then
+                        local d = (aimPos - originPos).Magnitude
+                        if d <= bestDist and hasClearShotOnPart(originPos, aimPart, model) then
+                            bestPart, bestModel, bestDist = aimPart, model, d
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestPart, bestModel
+end
+
+RunService.Heartbeat:Connect(function()
+    if CFG.SILENT_AIM or CFG.SILENT_AIM_SAVE_PLAYERS then
+        local targetPart, targetModel = getNearestZombie(CFG.MAX_RANGE)
+        silentAimCurrentTarget = targetPart
+    else
+        silentAimCurrentTarget = nil
+    end
+
+    if CFG.AUTO_SHOOT or CFG.AUTO_SAVE_PLAYERS then
+        local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+        if tool and isGun(tool) and getShotsLoadedForTool(tool) > 0 then
+            local targetPart, targetModel = getNearestZombie(CFG.MAX_RANGE)
+            if targetPart then
+                autoShootCurrentTarget = targetPart
+                local aimPos = CFG.INSTANT_SHOOT and targetPart.Position or getPredictedAimPosition(targetPart)
+                local remote = findRemoteForTool(tool)
+                if remote then
+                    local modelRef = LocalPlayer.Character:FindFirstChild("Model") or LocalPlayer.Character
+                    pcall(function() remote:FireServer("Fire", modelRef, aimPos, Workspace:GetServerTimeNow()) end)
+                end
+            else
+                autoShootCurrentTarget = nil
+            end
+        end
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    char.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and isGun(child) then
+            pcall(tryReloadTool, child)
+            child.Equipped:Connect(function() pcall(tryReloadTool, child) end)
+        end
+    end)
+end)
 local function getBayonetDynamicHeight(distance)
     local optimalDist = 12
     local dropScale = 140
@@ -85,6 +300,25 @@ local function isBayonetBehindWall(targetPart)
     local direction = targetPart.Position - origin
     local raycastResult = workspace:Raycast(origin, direction, raycastParams)
     return raycastResult ~= nil
+end
+local function getDangerZones()
+    local zones = {}
+    for _, model in ipairs(workspace:GetChildren()) do
+        if model:IsA("Model") and (model.Name:find("Bomber") or model:FindFirstChild("Barrel")) then
+            local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Barrel")
+            if root then table.insert(zones, root.Position) end
+        end
+    end
+    local camFolder = workspace:FindFirstChild("Camera")
+    if camFolder then
+        for _, m in ipairs(camFolder:GetChildren()) do
+            if m.Name:find("Bomber") or m:FindFirstChild("Barrel") then
+                local r = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Barrel")
+                if r then table.insert(zones, r.Position) end
+            end
+        end
+    end
+    return zones
 end
 
 local function getBayonetTarget()
@@ -157,42 +391,6 @@ RunService.RenderStepped:Connect(function()
     else bayonetLaser.Transparency = 1 end
 end)
 
-RunService.RenderStepped:Connect(function()
-    if CFG.SHOW_RANGE and CFG.AUTO_FACE_ON and currentTarget then
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        local tPart = currentTarget:FindFirstChild("HumanoidRootPart") or currentTarget:FindFirstChild("Head")
-        if hrp and tPart then
-            local dist = (hrp.Position - tPart.Position).Magnitude
-            laser.Size = Vector3.new(0.05, 0.05, dist)
-            laser.CFrame = CFrame.new(hrp.Position:Lerp(tPart.Position, 0.5), tPart.Position)
-            laser.Transparency = 0.4
-            return
-        end
-    end
-    laser.Transparency = 1 
-end)
-
-local function getDangerZones()
-    local zones = {}
-    for _, model in ipairs(workspace:GetChildren()) do
-        if model:IsA("Model") and (model.Name:find("Bomber") or model:FindFirstChild("Barrel")) then
-            local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Barrel")
-            if root then table.insert(zones, root.Position) end
-        end
-    end
-    local camFolder = workspace:FindFirstChild("Camera")
-    if camFolder then
-        for _, m in ipairs(camFolder:GetChildren()) do
-            if m.Name:find("Bomber") or m:FindFirstChild("Barrel") then
-                local r = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Barrel")
-                if r then table.insert(zones, r.Position) end
-            end
-        end
-    end
-    return zones
-end
-
 local function isBehindWall(targetPart)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -249,7 +447,7 @@ local function createESP(model, color, label)
     local bgui = Instance.new("BillboardGui", torso)
     bgui.Size, bgui.AlwaysOnTop, bgui.StudsOffset = UDim2.new(0, 100, 0, 40), true, Vector3.new(0, 3.5, 0)
     local tl = Instance.new("TextLabel", bgui)
-    tl.BackgroundTransparency, tl.Size, tl.Text, tl.TextColor3, tl.TextStrokeTransparency, tl.TextSize, tl.Font = 1, UDim2.new(1, 0, 1, 0), "【 " .. label .. " 】", color, 0.5, 13, Enum.Font.GothamBold
+    tl.BackgroundTransparency, tl.Size, tl.Text, tl.TextColor3, tl.TextStrokeTransparency, tl.TextSize, tl.Font = 1, UDim2.new(1, 0, 1, 0), "[ " .. label .. " ]", color, 0.5, 13, Enum.Font.GothamBold
     espHighlights[model] = {hl = hl, gui = bgui}
 end
 
@@ -263,7 +461,7 @@ RunService.Heartbeat:Connect(function()
             if activeStates[name] and config.check(obj) then
                 currentTargets[obj] = true
                 createESP(obj, config.color, name)
-                if config.alert and activeStates["自爆提醒"] and root then
+                if config.alert and activeStates["BomberAlert"] and root then
                     local t = obj:FindFirstChild("Torso") or obj:FindFirstChild("HumanoidRootPart")
                     if t and (root.Position - t.Position).Magnitude <= ALERT_RANGE then anyNear = true end
                 end
@@ -297,10 +495,26 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
+RunService.RenderStepped:Connect(function()
+    if CFG.SHOW_RANGE and CFG.AUTO_FACE_ON and currentTarget then
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local tPart = currentTarget:FindFirstChild("HumanoidRootPart") or currentTarget:FindFirstChild("Head")
+        if hrp and tPart then
+            local dist = (hrp.Position - tPart.Position).Magnitude
+            laser.Size = Vector3.new(0.05, 0.05, dist)
+            laser.CFrame = CFrame.new(hrp.Position:Lerp(tPart.Position, 0.5), tPart.Position)
+            laser.Transparency = 0.4
+            return
+        end
+    end
+    laser.Transparency = 1 
+end)
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
+    
     if CFG.JUMP_ON and method == "FireServer" and tostring(self) == "RemoteEvent" then
         if args[1] == "Swing" or args[1] == "Thrust" then
             task.defer(function()
@@ -310,11 +524,32 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             end)
         end
     end
+
+    if CFG.SILENT_AIM and method == "Raycast" and (self == Workspace or self.ClassName == "Workspace") then
+        if not checkcaller() and silentAimCurrentTarget then
+            local origin = args[1]
+            local aimPos = silentAimCurrentTarget.Position
+            local dir = (aimPos - origin)
+            args[2] = dir.Unit * (dir.Magnitude + 10)
+            return oldNamecall(self, unpack(args))
+        end
+    end
+
     return oldNamecall(self, ...)
 end)
 
+local oldIndex
+oldIndex = hookmetamethod(game, "__index", function(self, index)
+    if CFG.SILENT_AIM and self == LocalPlayer:GetMouse() and (index == "Hit" or index == "Target") then
+        if not checkcaller() and silentAimCurrentTarget then
+            return index == "Hit" and silentAimCurrentTarget.CFrame or silentAimCurrentTarget
+        end
+    end
+    return oldIndex(self, index)
+end)
+
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "SDGT_Elite_V61"
+ScreenGui.Name = "ZzcHub_Elite"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder = 999999999
@@ -323,7 +558,7 @@ ScreenGui.Parent = PlayerGui
 local Blur = Instance.new("BlurEffect")
 Blur.Size, Blur.Enabled, Blur.Parent = 0, true, Lighting
 
-local UI_WIDTH, UI_HEIGHT, BAR_HEIGHT = 70, 160, 18
+local UI_WIDTH, UI_HEIGHT, BAR_HEIGHT = 90, 160, 18
 local TARGET_BLACK = Color3.fromRGB(0, 0, 0)
 
 local FeatureStates, CategoryStates, ActiveSubUIs, SubUIFrames = {}, {}, {}, {}
@@ -389,7 +624,7 @@ local function updateStatusPanel()
     for _, child in ipairs(StatusPanel:GetChildren()) do if child:IsA("TextLabel") then child:Destroy() end end
     if not ShowStatus then return end
     local header = Instance.new("TextLabel")
-    header.Size, header.AutomaticSize, header.BackgroundTransparency, header.BackgroundColor3, header.BorderSizePixel, header.Text, header.Font, header.TextSize, header.TextColor3, header.TextXAlignment, header.LayoutOrder, header.Parent = UDim2.new(0, 0, 0, 16), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, "SDGT  ", Enum.Font.GothamBold, 12, Color3.new(1,1,1), Enum.TextXAlignment.Right, -1, StatusPanel
+    header.Size, header.AutomaticSize, header.BackgroundTransparency, header.BackgroundColor3, header.BorderSizePixel, header.Text, header.Font, header.TextSize, header.TextColor3, header.TextXAlignment, header.LayoutOrder, header.Parent = UDim2.new(0, 0, 0, 16), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, "ZzcHub  ", Enum.Font.GothamBold, 12, Color3.new(1,1,1), Enum.TextXAlignment.Right, -1, StatusPanel
     applyDreamyGradient(header)
     local activeNames = {}
     for name, state in pairs(FeatureStates) do if state then table.insert(activeNames, name) end end
@@ -429,7 +664,7 @@ local function updateAllThemes()
 end
 
 local function setupDraggableAndToggle(frame, titleBar, contentFrame, isMain)
-    local dragging, dragStart, startPos, hasMoved, clickTime, inputConnection = false, nil, nil, false
+    local dragging, dragStart, startPos, hasMoved, clickTime, inputConnection = false, nil, nil, false, nil, nil
     titleBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging, hasMoved, dragStart, startPos, clickTime = true, false, input.Position, frame.Position, tick()
@@ -456,7 +691,6 @@ local function setupDraggableAndToggle(frame, titleBar, contentFrame, isMain)
         end
     end)
 end
-
 local function createBaseFrame(name)
     local frame = Instance.new("Frame")
     frame.Name, frame.Size, frame.BorderSizePixel, frame.Visible, frame.ClipsDescendants = name, UDim2.fromOffset(UI_WIDTH, UI_HEIGHT), 0, false, true
@@ -505,10 +739,9 @@ local function createFeatureButton(parent, name, isCategory, clickCallback, isAc
     end)
     return btn
 end
-
 MainFrame = createBaseFrame("MainFrame")
-MainFrame.Position, MainFrame.Parent = UDim2.new(0.5, -35, 0.2, 0), ScreenGui
-MainTitle = createTitleBar(MainFrame, "精英V61")
+MainFrame.Position, MainFrame.Parent = UDim2.new(0.5, -45, 0.2, 0), ScreenGui
+MainTitle = createTitleBar(MainFrame, "ZzcHub V61")
 local MainContent = Instance.new("ScrollingFrame")
 MainContent.Size, MainContent.Position, MainContent.BackgroundTransparency, MainContent.ScrollBarThickness, MainContent.AutomaticCanvasSize, MainContent.Parent = UDim2.new(1, 0, 1, -BAR_HEIGHT), UDim2.new(0, 0, 0, BAR_HEIGHT), 1, 0, Enum.AutomaticSize.Y, MainFrame
 Instance.new("UIListLayout", MainContent).SortOrder = Enum.SortOrder.LayoutOrder
@@ -529,35 +762,55 @@ local function createSubWindow(name, items)
     local subScroll = Instance.new("ScrollingFrame")
     subScroll.Size, subScroll.Position, subScroll.BackgroundTransparency, subScroll.ScrollBarThickness, subScroll.Parent = UDim2.new(1, 0, 1, -BAR_HEIGHT), UDim2.new(0, 0, 0, BAR_HEIGHT), 1, 0, sub
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
-    if name == "战斗功能" then
+    
+    if name == "Combat" then
         local jumpContainer = Instance.new("Frame")
         jumpContainer.Size, jumpContainer.BackgroundTransparency, jumpContainer.ClipsDescendants, jumpContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", jumpContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        createFeatureButton(subScroll, "挥刀跳", false, function() local s = FeatureStates["挥刀跳"] CFG.JUMP_ON = s TweenService:Create(jumpContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 150) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        createFeatureButton(jumpContainer, "自动朝向", true, function() CFG.AUTO_FACE_ON = CategoryStates["自动朝向"] end)
-        createFeatureButton(jumpContainer, "自动朝向自爆", true, function() CFG.FACE_BOMBER = CategoryStates["自动朝向自爆"] end)
-        createFeatureButton(jumpContainer, "墙壁检测", true, function() CFG.WALL_CHECK = CategoryStates["墙壁检测"] end)
-        createFeatureButton(jumpContainer, "范围显示", true, function() CFG.SHOW_RANGE = CategoryStates["范围显示"] end)
-        createFeatureButton(jumpContainer, "距离 +", false, function() CFG.SCAN_DIST = math.min(CFG.SCAN_DIST + 5, 100) end, true)
-        createFeatureButton(jumpContainer, "距离 -", false, function() CFG.SCAN_DIST = math.max(CFG.SCAN_DIST - 5, 5) end, true)
-        createFeatureButton(jumpContainer, "偏移 +", false, function() CFG.LEFT_OFFSET = CFG.LEFT_OFFSET + 1 end, true)
-        createFeatureButton(jumpContainer, "偏移 -", false, function() CFG.LEFT_OFFSET = CFG.LEFT_OFFSET - 1 end, true)
+        createFeatureButton(subScroll, "Swing Jump", false, function() local s = FeatureStates["Swing Jump"] CFG.JUMP_ON = s TweenService:Create(jumpContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 150) or UDim2.new(1, 0, 0, 0)}):Play() end)
+        createFeatureButton(jumpContainer, "Auto Face", true, function() CFG.AUTO_FACE_ON = CategoryStates["Auto Face"] end)
+        createFeatureButton(jumpContainer, "Face Bomber", true, function() CFG.FACE_BOMBER = CategoryStates["Face Bomber"] end)
+        createFeatureButton(jumpContainer, "Wall Check", true, function() CFG.WALL_CHECK = CategoryStates["Wall Check"] end)
+        createFeatureButton(jumpContainer, "Show Range", true, function() CFG.SHOW_RANGE = CategoryStates["Show Range"] end)
+        createFeatureButton(jumpContainer, "Dist +", false, function() CFG.SCAN_DIST = math.min(CFG.SCAN_DIST + 5, 100) end, true)
+        createFeatureButton(jumpContainer, "Dist -", false, function() CFG.SCAN_DIST = math.max(CFG.SCAN_DIST - 5, 5) end, true)
+        createFeatureButton(jumpContainer, "Offset +", false, function() CFG.LEFT_OFFSET = CFG.LEFT_OFFSET + 1 end, true)
+        createFeatureButton(jumpContainer, "Offset -", false, function() CFG.LEFT_OFFSET = CFG.LEFT_OFFSET - 1 end, true)
+        
         local bayonetContainer = Instance.new("Frame")
         bayonetContainer.Size, bayonetContainer.BackgroundTransparency, bayonetContainer.ClipsDescendants, bayonetContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", bayonetContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        createFeatureButton(subScroll, "刺刀辅助", false, function() local s = FeatureStates["刺刀辅助"] CFG.BAYONET_ON = s TweenService:Create(bayonetContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 60) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        createFeatureButton(bayonetContainer, "范围显示", true, function() CFG.BAYONET_SHOW_RANGE = CategoryStates["范围显示"] end)
-        createFeatureButton(bayonetContainer, "墙体检测", true, function() CFG.BAYONET_WALL_CHECK = CategoryStates["墙体检测"] end)
-        createFeatureButton(bayonetContainer, "是否瞄准自爆", true, function() CFG.BAYONET_FACE_BOMBER = CategoryStates["是否瞄准自爆"] end)
+        createFeatureButton(subScroll, "Bayonet Assist", false, function() local s = FeatureStates["Bayonet Assist"] CFG.BAYONET_ON = s TweenService:Create(bayonetContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 60) or UDim2.new(1, 0, 0, 0)}):Play() end)
+        createFeatureButton(bayonetContainer, "Show Range", true, function() CFG.BAYONET_SHOW_RANGE = CategoryStates["Show Range"] end)
+        createFeatureButton(bayonetContainer, "Wall Check", true, function() CFG.BAYONET_WALL_CHECK = CategoryStates["Wall Check"] end)
+        createFeatureButton(bayonetContainer, "Aim Bomber", true, function() CFG.BAYONET_FACE_BOMBER = CategoryStates["Aim Bomber"] end)
+
+        local gunContainer = Instance.new("Frame")
+        gunContainer.Size, gunContainer.BackgroundTransparency, gunContainer.ClipsDescendants, gunContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
+        Instance.new("UIListLayout", gunContainer).SortOrder = Enum.SortOrder.LayoutOrder
+        createFeatureButton(subScroll, "Gun Mods", false, function() 
+            local s = FeatureStates["Gun Mods"] 
+            TweenService:Create(gunContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 180) or UDim2.new(1, 0, 0, 0)}):Play() 
+        end)
+        createFeatureButton(gunContainer, "Auto Shoot", true, function() CFG.AUTO_SHOOT = CategoryStates["Auto Shoot"] end)
+        createFeatureButton(gunContainer, "Silent Aim", true, function() CFG.SILENT_AIM = CategoryStates["Silent Aim"] end)
+        createFeatureButton(gunContainer, "Insta Shoot", true, function() CFG.INSTANT_SHOOT = CategoryStates["Insta Shoot"] end)
+        createFeatureButton(gunContainer, "Auto Reload", true, function() CFG.AUTO_RELOAD = CategoryStates["Auto Reload"] end)
+        createFeatureButton(gunContainer, "Wall Check", true, function() CFG.GUN_WALL_CHECK = CategoryStates["Wall Check"] end)
+        createFeatureButton(gunContainer, "Use FOV", true, function() CFG.USE_FOV = CategoryStates["Use FOV"] end)
+        createFeatureButton(gunContainer, "Show FOV", true, function() CFG.SHOW_FOV = CategoryStates["Show FOV"] end)
+        createFeatureButton(gunContainer, "FOV +", false, function() CFG.FOV_SIZE = math.min(CFG.FOV_SIZE + 5, 120) end, true)
+        createFeatureButton(gunContainer, "FOV -", false, function() CFG.FOV_SIZE = math.max(CFG.FOV_SIZE - 5, 10) end, true)
+        createFeatureButton(gunContainer, "Mortar Time", true, function() CFG.HAND_MORTAR_TIMING = CategoryStates["Mortar Time"] end)
     end
-    if name == "辅助类" then
+if name == "Visuals" then
         local espContainer = Instance.new("Frame")
         espContainer.Size, espContainer.BackgroundTransparency, espContainer.ClipsDescendants, espContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", espContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        createFeatureButton(subScroll, "僵尸透视", false, function() local s = FeatureStates["僵尸透视"] TweenService:Create(espContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 180) or UDim2.new(1, 0, 0, 0)}):Play() end)
-        local sortedESP = {"自爆", "燃烧者", "大师兄", "红眼", "二师兄"}
+        createFeatureButton(subScroll, "Zombie ESP", false, function() local s = FeatureStates["Zombie ESP"] TweenService:Create(espContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 180) or UDim2.new(1, 0, 0, 0)}):Play() end)
+        local sortedESP = {"Bomber", "Igniter", "Zapper", "Runner", "Cuirassier"}
         for _, espName in ipairs(sortedESP) do createFeatureButton(espContainer, espName, true, function() activeStates[espName] = CategoryStates[espName] end) end
-        createFeatureButton(espContainer, "自爆提醒", true, function() activeStates["自爆提醒"] = CategoryStates["自爆提醒"] end)
+        createFeatureButton(espContainer, "Bomber Alert", true, function() activeStates["BomberAlert"] = CategoryStates["Bomber Alert"] end)
     end
     for _, v in ipairs(items) do createFeatureButton(subScroll, v, false) end
     setupDraggableAndToggle(sub, subTitle, subScroll, false)
@@ -573,27 +826,27 @@ local function initResizeLogic()
 end
 
 local function createSettingSub()
-    local name = "界面设置"
+    local name = "UI Setup"
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
     local subTitle = createTitleBar(sub, name)
     local subScroll = Instance.new("ScrollingFrame")
     subScroll.Size, subScroll.Position, subScroll.BackgroundTransparency, subScroll.ScrollBarThickness, subScroll.Parent = UDim2.new(1, 0, 1, -BAR_HEIGHT), UDim2.new(0, 0, 0, BAR_HEIGHT), 1, 0, sub
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
-    createFeatureButton(subScroll, "显示状态", true, function() ShowStatus = not ShowStatus updateStatusPanel() end)
-    createFeatureButton(subScroll, "自由拖动", true, function() LockSubUIs = not LockSubUIs end)
-    createFeatureButton(subScroll, "彩虹标题", true, function() UseRainbowTitle = not UseRainbowTitle updateAllThemes() end)
-    createFeatureButton(subScroll, "文字渐变", true, function() UseTextGradient = not UseTextGradient end)
+    createFeatureButton(subScroll, "Show Status", true, function() ShowStatus = not ShowStatus updateStatusPanel() end)
+    createFeatureButton(subScroll, "Free Drag", true, function() LockSubUIs = not LockSubUIs end)
+    createFeatureButton(subScroll, "Rainbow Tag", true, function() UseRainbowTitle = not UseRainbowTitle updateAllThemes() end)
+    createFeatureButton(subScroll, "Text Fade", true, function() UseTextGradient = not UseTextGradient end)
     local resizeContainer = Instance.new("Frame")
     resizeContainer.Name, resizeContainer.Size, resizeContainer.BackgroundTransparency, resizeContainer.ClipsDescendants, resizeContainer.Parent = "ResizeSection", UDim2.new(1, 0, 0, 0), 1, true, subScroll
-    createFeatureButton(subScroll, "调整大小", true, function() local s = CategoryStates["调整大小"] ResizeHandle.Visible = s TweenService:Create(resizeContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, BAR_HEIGHT) or UDim2.new(1, 0, 0, 0)}):Play() end)
-    createFeatureButton(resizeContainer, "重置大小", false, function() UI_WIDTH, UI_HEIGHT = 70, 160 updateUISizes() end, true)
+    createFeatureButton(subScroll, "Resize UI", true, function() local s = CategoryStates["Resize UI"] ResizeHandle.Visible = s TweenService:Create(resizeContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, BAR_HEIGHT) or UDim2.new(1, 0, 0, 0)}):Play() end)
+    createFeatureButton(resizeContainer, "Reset Size", false, function() UI_WIDTH, UI_HEIGHT = 90, 160 updateUISizes() end, true)
     local styleContainer = Instance.new("Frame")
     styleContainer.Size, styleContainer.BackgroundTransparency, styleContainer.ClipsDescendants, styleContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
     Instance.new("UIListLayout", styleContainer).SortOrder = Enum.SortOrder.LayoutOrder
-    createFeatureButton(subScroll, "界面主题", true, function() TweenService:Create(styleContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = CategoryStates["界面主题"] and UDim2.new(1, 0, 0, 90) or UDim2.new(1, 0, 0, 0)}):Play() end)
+    createFeatureButton(subScroll, "Themes", true, function() TweenService:Create(styleContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = CategoryStates["Themes"] and UDim2.new(1, 0, 0, 90) or UDim2.new(1, 0, 0, 0)}):Play() end)
     styleContainer.LayoutOrder = 99
-    local themes = {["暗黑模式"]="Dark", ["玻璃质感"]="Glass", ["霓虹紫"]="Neon", ["午夜蓝"]="Midnight", ["深海蓝"]="DeepSea"}
+    local themes = {["Dark"]="Dark", ["Glass"]="Glass", ["Neon"]="Neon", ["Midnight"]="Midnight", ["DeepSea"]="DeepSea"}
     for n, v in pairs(themes) do createFeatureButton(styleContainer, n, true, function() if CategoryStates[n] then CurrentTheme = v for k, _ in pairs(themes) do if k ~= n then CategoryStates[k] = false end end else CurrentTheme = "Dark" end updateAllThemes() end) end
     setupDraggableAndToggle(sub, subTitle, subScroll, false)
     SubUIFrames[name] = sub
@@ -611,7 +864,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 local MainButton = Instance.new("TextButton")
-MainButton.Parent, MainButton.BackgroundColor3, MainButton.Size, MainButton.Position, MainButton.Text, MainButton.Font, MainButton.TextColor3, MainButton.TextSize = ScreenGui, Color3.new(0.04,0.04,0.04), UDim2.fromOffset(35, 35), UDim2.new(0.05, 0, 0.4, 0), "S", Enum.Font.GothamBold, Color3.new(1,1,1), 16
+MainButton.Parent, MainButton.BackgroundColor3, MainButton.Size, MainButton.Position, MainButton.Text, MainButton.Font, MainButton.TextColor3, MainButton.TextSize = ScreenGui, Color3.new(0.04,0.04,0.04), UDim2.fromOffset(35, 35), UDim2.new(0.05, 0, 0.4, 0), "Z", Enum.Font.GothamBold, Color3.new(1,1,1), 16
 local MBStroke = Instance.new("UIStroke")
 MBStroke.Thickness, MBStroke.Color, MBStroke.Parent = 1, Color3.fromRGB(80, 80, 80), MainButton
 
@@ -621,10 +874,10 @@ local function initMainButtonDragging()
     UserInputService.InputChanged:Connect(function(i) if bDrag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then local d = i.Position - bS if d.Magnitude > 5 then bMoved = true end MainButton.Position = UDim2.new(bPS.X.Scale, bPS.X.Offset + d.X, bPS.Y.Scale, bPS.Y.Offset + d.Y) end end)
     UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then if bDrag then bDrag = false if not bMoved then MainFrame.Visible = not MainFrame.Visible TweenService:Create(Blur, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Size = MainFrame.Visible and 14 or 0}):Play() else MainButton.Position = (MainButton.AbsolutePosition.X < ScreenGui.AbsoluteSize.X/2) and UDim2.new(0, 5, MainButton.Position.Y.Scale, MainButton.Position.Y.Offset) or UDim2.new(1, -40, MainButton.Position.Y.Scale, MainButton.Position.Y.Offset) end end end end)
 end
+local SubLists = {["Combat"] = {}, ["Movement"] = {}, ["Visuals"] = {}, ["Player"] = {}}
+local listOrder = {"Combat", "Movement", "Visuals", "Player", "UI Setup"}
+for _, c in ipairs(listOrder) do if c == "UI Setup" then createSettingSub() else createSubWindow(c, SubLists[c]) end createFeatureButton(MainContent, c, true, function() toggleSubUI(c) end) end
 
-local SubLists = {["战斗功能"] = {}, ["移动功能"] = {}, ["辅助类"] = {}, ["玩家功能"] = {}}
-local listOrder = {"战斗功能", "移动功能", "辅助类", "玩家功能", "界面设置"}
-for _, c in ipairs(listOrder) do if c == "界面设置" then createSettingSub() else createSubWindow(c, SubLists[c]) end createFeatureButton(MainContent, c, true, function() toggleSubUI(c) end) end
 initMainButtonDragging()
 initResizeLogic()
 updateAllThemes()
