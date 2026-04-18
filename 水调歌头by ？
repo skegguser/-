@@ -42,7 +42,14 @@ local CFG = {
     MAX_RANGE = 200,
     HAND_MORTAR_TIMING = false,
 
-    WUDI_ON = false  -- 无敌（碰飞）开关
+    -- 无敌（碰飞）
+    WUDI_ON = false,
+
+    -- 移动 Speed 模块
+    SPEED_ENABLED = false,
+    SPEED_VALUE = 32,
+    SPRINT_BOOST = false,
+    SPRINT_BOOST_VALUE = 2.0,
 }
 
 local activeStates = {}
@@ -51,24 +58,6 @@ local persistentBurners = {}
 local currentTarget = nil
 local ALERT_RANGE = 20
 
-local BeamFolder = Instance.new("Folder", workspace)
-BeamFolder.Name = "SDGT_Beams"  -- 改名
-
-local laser = nil
-local bayonetLaser = nil
-local autoShootCurrentTarget = nil
-local silentAimCurrentTarget = nil
-local fovGui = nil
-local fovCircle = nil
-local reloadInProgress = {}
-local activeConnections = {}
-local watchedTools = {}
-
--- 无敌（碰飞）专用变量
-local wudiTargetPlayer = nil
-local wudiMoveLoopRunning = true
-local wudiPushLoopRunning = true
--- ================= 第2部分：ESP配置、光束、辅助函数 =================
 local ESP_CONFIGS = {
     ["Bomber"] = {check = function(obj) return obj:IsA("Model") and obj:FindFirstChild("Torch", true) end, color = Color3.fromRGB(255, 230, 0), alert = true},
     ["Cuirassier"] = {check = function(obj) return obj:IsA("Model") and obj.Name == "m_Zombie" and obj:FindFirstChild("Sword", true) end, color = Color3.fromRGB(0, 255, 150), alert = false},
@@ -81,6 +70,9 @@ local ESP_CONFIGS = {
         return false
     end, color = Color3.fromRGB(255, 120, 0), alert = false}
 }
+
+local BeamFolder = Instance.new("Folder", workspace)
+BeamFolder.Name = "SDGT_Beams"
 
 local function createBeam()
     local part = Instance.new("Part")
@@ -96,15 +88,32 @@ local function createBeam()
     return part
 end
 
-laser = createBeam()
-bayonetLaser = createBeam()
+local laser = createBeam()
+local bayonetLaser = createBeam()
 bayonetLaser.Name = "BayonetLaser"
 
+local autoShootCurrentTarget = nil
+local silentAimCurrentTarget = nil
+local fovGui = nil
+local fovCircle = nil
+local reloadInProgress = {}
+local activeConnections = {}
+local watchedTools = {}
+
+-- 无敌（碰飞）变量
+local wudiTargetPlayer = nil
+local wudiMoveLoopRunning = true
+local wudiPushLoopRunning = true
+
+-- 移动模块变量
+local originalWalkSpeed = nil
+-- ================= 第2部分：辅助函数、FOV、枪械装填 =================
 local function ensureFovGui()
     if fovGui and fovGui.Parent then return fovGui, fovCircle end
     fovGui = Instance.new("ScreenGui", PlayerGui)
     fovGui.Name = "Gun_FovGui"
     fovGui.ResetOnSpawn = false
+    
     local circle = Instance.new("Frame", fovGui)
     circle.AnchorPoint = Vector2.new(0.5, 0.5)
     circle.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -128,6 +137,22 @@ local function getFovScreenCenter()
     local inset = GuiService:GetGuiInset()
     return mousePos - Vector2.new(inset.X, inset.Y)
 end
+
+RunService.RenderStepped:Connect(function()
+    if CFG.SHOW_FOV and (CFG.AUTO_SHOOT or CFG.SILENT_AIM or CFG.AUTO_SAVE_PLAYERS) then
+        local gui, circle = ensureFovGui()
+        gui.Enabled = true
+        local cam = Workspace.CurrentCamera
+        if cam then
+            local sizePx = (math.clamp(CFG.FOV_SIZE, 10, 120) / 40) * 250
+            circle.Size = UDim2.new(0, sizePx, 0, sizePx)
+            local centerVec = getFovScreenCenter()
+            circle.Position = UDim2.new(centerVec.X / cam.ViewportSize.X, 0, centerVec.Y / cam.ViewportSize.Y, 0)
+        end
+    else
+        if fovGui then fovGui.Enabled = false end
+    end
+end)
 
 local function isWorldPosInFov(worldPos)
     if not CFG.USE_FOV then return true end
@@ -177,13 +202,15 @@ local function getPredictedAimPosition(part)
     local vel = part.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
     return pos + vel * CFG.PREDICTION
 end
--- ================= 第3部分：枪械装填、自动瞄准、刺刀辅助 =================
+
 local function performReload(tool, targetShots)
     if reloadInProgress[tool] then return end
     reloadInProgress[tool] = true
     local remote = findRemoteForTool(tool)
     if not remote then reloadInProgress[tool] = nil return end
+    
     if targetShots > 1 then pcall(function() remote:FireServer("StartReload") end) task.wait(0.1) end
+    
     local attempts = 0
     while attempts < 50 do
         if getShotsLoadedForTool(tool) >= targetShots then
@@ -215,9 +242,11 @@ local function getNearestZombie(range)
     local cam = Workspace.CurrentCamera
     local originPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and LocalPlayer.Character.Head.Position or cam.CFrame.Position
     if not originPos then return nil end
+
     local bestPart, bestModel, bestDist = nil, nil, range
     local zombiesFolder = Workspace:FindFirstChild("Zombies")
     if not zombiesFolder then return nil end
+
     for _, model in ipairs(zombiesFolder:GetDescendants()) do
         if model:IsA("Model") and not model:FindFirstChild("Spawn") then
             local hum = model:FindFirstChildOfClass("Humanoid")
@@ -245,6 +274,7 @@ RunService.Heartbeat:Connect(function()
     else
         silentAimCurrentTarget = nil
     end
+
     if CFG.AUTO_SHOOT or CFG.AUTO_SAVE_PLAYERS then
         local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
         if tool and isGun(tool) and getShotsLoadedForTool(tool) > 0 then
@@ -272,7 +302,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
         end
     end)
 end)
-
+-- ================= 第3部分：刺刀辅助、自动面向核心、ESP 创建 =================
 local function getBayonetDynamicHeight(distance)
     local optimalDist = 12
     local dropScale = 140
@@ -394,7 +424,7 @@ local function isBehindWall(targetPart)
     local raycastResult = workspace:Raycast(origin, direction, raycastParams)
     return raycastResult ~= nil
 end
--- ================= 第4部分：自动面向、ESP创建、Hook、无敌（碰飞） =================
+
 local function scanTarget()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -446,6 +476,7 @@ RunService.Heartbeat:Connect(function()
     local anyNear, currentTargets = false, {}
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
+    
     for _, obj in ipairs(Camera:GetChildren()) do
         for name, config in pairs(ESP_CONFIGS) do
             if activeStates[name] and config.check(obj) then
@@ -459,6 +490,7 @@ RunService.Heartbeat:Connect(function()
             end
         end
     end
+    
     for m, d in pairs(espHighlights) do 
         if not currentTargets[m] or not m:IsDescendantOf(workspace) then 
             if d.hl then d.hl:Destroy() end
@@ -467,6 +499,7 @@ RunService.Heartbeat:Connect(function()
             persistentBurners[m] = nil
         end 
     end
+
     if not CFG.AUTO_FACE_ON then currentTarget = nil return end
     scanTarget()
     if currentTarget then
@@ -498,11 +531,12 @@ RunService.RenderStepped:Connect(function()
     end
     laser.Transparency = 1 
 end)
-
+-- ================= 第4部分：Hook、无敌（碰飞）、移动 Speed 核心循环 =================
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
+    
     if CFG.JUMP_ON and method == "FireServer" and tostring(self) == "RemoteEvent" then
         if args[1] == "Swing" or args[1] == "Thrust" then
             task.defer(function()
@@ -512,6 +546,7 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             end)
         end
     end
+
     if CFG.SILENT_AIM and method == "Raycast" and (self == Workspace or self.ClassName == "Workspace") then
         if not checkcaller() and silentAimCurrentTarget then
             local origin = args[1]
@@ -521,6 +556,7 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             return oldNamecall(self, unpack(args))
         end
     end
+
     return oldNamecall(self, ...)
 end)
 
@@ -595,7 +631,48 @@ task.spawn(function()
         end
     end
 end)
--- ================= 第5部分：UI核心框架 =================
+
+-- ================= 移动 Speed 核心循环 =================
+task.spawn(function()
+    while true do
+        task.wait()
+        local char = LocalPlayer.Character
+        if not char then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then continue end
+        if originalWalkSpeed == nil then
+            originalWalkSpeed = hum.WalkSpeed
+        end
+        if CFG.SPEED_ENABLED then
+            hum.WalkSpeed = CFG.SPEED_VALUE
+        elseif CFG.SPRINT_BOOST then
+            local isSprinting = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+            if isSprinting and hum.FloorMaterial ~= Enum.Material.Air then
+                hum.WalkSpeed = originalWalkSpeed * CFG.SPRINT_BOOST_VALUE
+            else
+                hum.WalkSpeed = originalWalkSpeed
+            end
+        else
+            hum.WalkSpeed = originalWalkSpeed
+        end
+    end
+end)
+
+-- 角色重生时重置移速
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if CFG.SPEED_ENABLED then
+            hum.WalkSpeed = CFG.SPEED_VALUE
+        elseif CFG.SPRINT_BOOST then
+            hum.WalkSpeed = originalWalkSpeed or 16
+        else
+            hum.WalkSpeed = originalWalkSpeed or 16
+        end
+    end
+end)
+-- ================= 第5部分：UI 核心框架 =================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SDGT_Elite_Gui"
 ScreenGui.ResetOnSpawn = false
@@ -693,16 +770,24 @@ local function updateStatusPanel()
     local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
     local titleSize = math.floor(12 * scale)
     local textSize = math.floor(10 * scale)
+    
     local header = Instance.new("TextLabel")
     header.Size, header.AutomaticSize, header.BackgroundTransparency, header.BackgroundColor3, header.BorderSizePixel, header.Text, header.Font, header.TextSize, header.TextColor3, header.TextXAlignment, header.LayoutOrder, header.Parent = UDim2.new(0, 0, 0, 16), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, "SDGT ELIT  ", Enum.Font.GothamBold, titleSize, Color3.new(1,1,1), Enum.TextXAlignment.Right, -1, StatusPanel
     applyDreamyGradient(header)
     local activeNames = {}
     for name, state in pairs(FeatureStates) do if state then table.insert(activeNames, name) end end
     table.sort(activeNames, function(a, b) return #(a .. "  ") > #(b .. "  ") end)
+    local nameMap = {
+        ["Swing Jump"]="跳跃攻击", ["Auto Face"]="自动面对", ["Face Bomber"]="面对炸弹兵", ["Wall Check"]="墙体检测",
+        ["Show Range"]="显示范围", ["Bayonet Assist"]="刺刀辅助", ["Aim Bomber"]="瞄准炸弹兵", ["Gun Mods"]="枪械模组",
+        ["Auto Shoot"]="自动射击", ["Silent Aim"]="静默瞄准", ["Insta Shoot"]="瞬间射击", ["Auto Reload"]="自动装填",
+        ["Use FOV"]="使用视野", ["Show FOV"]="显示视野圈", ["Mortar Time"]="迫击炮时机", ["Zombie ESP"]="僵尸透视",
+        ["无敌"]="无敌(碰飞)", ["Speed 增强"]="Speed增强", ["疾跑增强"]="疾跑增强"
+    }
     for i, name in ipairs(activeNames) do
-        local displayName = ({["Swing Jump"]="跳跃攻击",["Auto Face"]="自动面对",["Face Bomber"]="面对炸弹兵",["Wall Check"]="墙体检测",["Show Range"]="显示范围",["Bayonet Assist"]="刺刀辅助",["Aim Bomber"]="瞄准炸弹兵",["Gun Mods"]="枪械模组",["Auto Shoot"]="自动射击",["Silent Aim"]="静默瞄准",["Insta Shoot"]="瞬间射击",["Auto Reload"]="自动装填",["Use FOV"]="使用视野",["Show FOV"]="显示视野圈",["Mortar Time"]="迫击炮时机",["Zombie ESP"]="僵尸透视",["无敌"]="无敌(碰飞)"})[name] or name
+        local display = nameMap[name] or name
         local label = Instance.new("TextLabel")
-        label.Size, label.AutomaticSize, label.BackgroundTransparency, label.BackgroundColor3, label.BorderSizePixel, label.Text, label.Font, label.TextSize, label.TextColor3, label.TextXAlignment, label.LayoutOrder, label.Parent, label.Position, label.TextTransparency = UDim2.new(0, 0, 0, 14), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, displayName .. "  ", Enum.Font.GothamBold, textSize, Color3.new(1, 1, 1), Enum.TextXAlignment.Right, i, StatusPanel, UDim2.new(0, 20, 0, 14), 1
+        label.Size, label.AutomaticSize, label.BackgroundTransparency, label.BackgroundColor3, label.BorderSizePixel, label.Text, label.Font, label.TextSize, label.TextColor3, label.TextXAlignment, label.LayoutOrder, label.Parent, label.Position, label.TextTransparency = UDim2.new(0, 0, 0, 14), Enum.AutomaticSize.X, 0.4, Color3.new(0,0,0), 0, display .. "  ", Enum.Font.GothamBold, textSize, Color3.new(1, 1, 1), Enum.TextXAlignment.Right, i, StatusPanel, UDim2.new(0, 20, 0, 14), 1
         applyDreamyGradient(label)
         TweenService:Create(label, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Position = UDim2.new(0, 0, 0, 14), TextTransparency = 0}):Play()
     end
@@ -836,7 +921,8 @@ end
 local function createSubWindow(name, items)
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
-    local subTitle = createTitleBar(sub, ({Combat="战斗", Movement="移动", Visuals="视觉效果", Player="玩家"})[name] or name)
+    local titleMap = {Combat="战斗", Movement="移动", Visuals="视觉效果", Player="玩家"}
+    local subTitle = createTitleBar(sub, titleMap[name] or name)
     local subScroll = Instance.new("ScrollingFrame")
     subScroll.Size, subScroll.Position, subScroll.BackgroundTransparency, subScroll.ScrollBarThickness, subScroll.Parent = UDim2.new(1, 0, 1, -BAR_HEIGHT), UDim2.new(0, 0, 0, BAR_HEIGHT), 1, 0, sub
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
@@ -905,6 +991,7 @@ local function createSubWindow(name, items)
         local mortarTime = createFeatureButton(gunContainer, "Mortar Time", true, function() CFG.HAND_MORTAR_TIMING = CategoryStates["Mortar Time"] end)
         mortarTime.Text = "迫击炮时机"
     end
+    
     if name == "Visuals" then
         local espContainer = Instance.new("Frame")
         espContainer.Size, espContainer.BackgroundTransparency, espContainer.ClipsDescendants, espContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
@@ -920,6 +1007,7 @@ local function createSubWindow(name, items)
         local bomberAlert = createFeatureButton(espContainer, "Bomber Alert", true, function() activeStates["BomberAlert"] = CategoryStates["Bomber Alert"] end)
         bomberAlert.Text = "炸弹兵警报"
     end
+    
     if name == "Player" then
         local wudiBtn = createFeatureButton(subScroll, "无敌", false, function()
             CFG.WUDI_ON = not CFG.WUDI_ON
@@ -931,6 +1019,69 @@ local function createSubWindow(name, items)
         end)
         wudiBtn.Text = "无敌(碰飞)"
     end
+    
+    if name == "Movement" then
+        -- Speed 增强
+        local speedContainer = Instance.new("Frame")
+        speedContainer.Size, speedContainer.BackgroundTransparency, speedContainer.ClipsDescendants, speedContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
+        Instance.new("UIListLayout", speedContainer).SortOrder = Enum.SortOrder.LayoutOrder
+        local speedMain = createFeatureButton(subScroll, "Speed 增强", false, function()
+            local s = FeatureStates["Speed 增强"]
+            CFG.SPEED_ENABLED = s
+            TweenService:Create(speedContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 45) or UDim2.new(1, 0, 0, 0)}):Play()
+        end)
+        speedMain.Text = "Speed 增强"
+        local speedSliderFrame = Instance.new("Frame")
+        speedSliderFrame.Size, speedSliderFrame.BackgroundTransparency, speedSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, speedContainer
+        local speedLabel = Instance.new("TextLabel")
+        speedLabel.Size, speedLabel.BackgroundTransparency, speedLabel.Text, speedLabel.TextColor3, speedLabel.TextSize, speedLabel.Font, speedLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "Speed: " .. CFG.SPEED_VALUE, Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
+        local speedBox = Instance.new("TextBox")
+        speedBox.Size, speedBox.Position, speedBox.BackgroundTransparency, speedBox.Text, speedBox.TextColor3, speedBox.TextSize, speedBox.Font, speedBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.SPEED_VALUE), Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
+        speedBox.FocusLost:Connect(function()
+            local val = tonumber(speedBox.Text)
+            if val then
+                val = math.clamp(val, 16, 250)
+                CFG.SPEED_VALUE = val
+                speedBox.Text = tostring(val)
+                speedLabel.Text = "Speed: " .. val
+                if CFG.SPEED_ENABLED then
+                    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                    if hum then hum.WalkSpeed = val end
+                end
+            else
+                speedBox.Text = tostring(CFG.SPEED_VALUE)
+            end
+        end)
+        
+        -- 疾跑增强
+        local sprintContainer = Instance.new("Frame")
+        sprintContainer.Size, sprintContainer.BackgroundTransparency, sprintContainer.ClipsDescendants, sprintContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
+        Instance.new("UIListLayout", sprintContainer).SortOrder = Enum.SortOrder.LayoutOrder
+        local sprintMain = createFeatureButton(subScroll, "疾跑增强", false, function()
+            local s = FeatureStates["疾跑增强"]
+            CFG.SPRINT_BOOST = s
+            TweenService:Create(sprintContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 45) or UDim2.new(1, 0, 0, 0)}):Play()
+        end)
+        sprintMain.Text = "疾跑增强"
+        local sprintSliderFrame = Instance.new("Frame")
+        sprintSliderFrame.Size, sprintSliderFrame.BackgroundTransparency, sprintSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, sprintContainer
+        local sprintLabel = Instance.new("TextLabel")
+        sprintLabel.Size, sprintLabel.BackgroundTransparency, sprintLabel.Text, sprintLabel.TextColor3, sprintLabel.TextSize, sprintLabel.Font, sprintLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "倍率: " .. CFG.SPRINT_BOOST_VALUE, Color3.new(1,1,1), 12, Enum.Font.Gotham, sprintSliderFrame
+        local sprintBox = Instance.new("TextBox")
+        sprintBox.Size, sprintBox.Position, sprintBox.BackgroundTransparency, sprintBox.Text, sprintBox.TextColor3, sprintBox.TextSize, sprintBox.Font, sprintBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.SPRINT_BOOST_VALUE), Color3.new(1,1,1), 12, Enum.Font.Gotham, sprintSliderFrame
+        sprintBox.FocusLost:Connect(function()
+            local val = tonumber(sprintBox.Text)
+            if val then
+                val = math.clamp(val, 1.0, 5.0)
+                CFG.SPRINT_BOOST_VALUE = val
+                sprintBox.Text = tostring(val)
+                sprintLabel.Text = "倍率: " .. val
+            else
+                sprintBox.Text = tostring(CFG.SPRINT_BOOST_VALUE)
+            end
+        end)
+    end
+    
     for _, v in ipairs(items) do
         local btn = createFeatureButton(subScroll, v, false)
         btn.Text = v
@@ -1016,7 +1167,8 @@ for _, c in ipairs(listOrder) do
         createSubWindow(c, SubLists[c]) 
     end 
     local btn = createFeatureButton(MainContent, c, true, function() toggleSubUI(c) end)
-    btn.Text = ({Combat="战斗", Movement="移动", Visuals="视觉效果", Player="玩家", ["UI Setup"]="界面设置"})[c] or c
+    local btnNames = {Combat="战斗", Movement="移动", Visuals="视觉效果", Player="玩家", ["UI Setup"]="界面设置"}
+    btn.Text = btnNames[c] or c
 end
 
 initMainButtonDragging()
