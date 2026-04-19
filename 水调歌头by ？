@@ -1,7 +1,6 @@
 -- ================= SDGT ELIT 完整整合版（修复版） =================
--- 包含：原SDGT ELIT所有枪械/刺刀/透视/静默瞄准/UI + 融合GB脚本的杀戮光环、职业、地图功能
--- 修复：尺寸调整功能正常；地图功能输入框字体统一缩放
--- 飞行移至移动选项卡，无敌碰飞移至玩家选项卡，职业/地图功能归入玩家选项卡
+-- 修复：杀戮光环近战无效、无敌碰飞导致死亡、速度不稳定
+-- 所有功能均集成在可拖动UI中
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -105,10 +104,9 @@ local reloadInProgress = {}
 local activeConnections = {}
 local watchedTools = {}
 
--- 无敌（碰飞）变量
+-- 无敌（碰飞）变量（修复版）
 local wudiTargetPlayer = nil
 local wudiMoveLoopRunning = true
-local wudiPushLoopRunning = true
 local originalWalkSpeed = nil
 
 -- 飞行UI变量
@@ -304,7 +302,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end)
 end)
 
--- 刺刀辅助
+-- 刺刀辅助（原SDGT ELIT）
 local function getBayonetDynamicHeight(distance)
     local optimalDist = 12
     local dropScale = 140
@@ -414,7 +412,7 @@ RunService.RenderStepped:Connect(function()
     else bayonetLaser.Transparency = 1 end
 end)
 
--- 自动面对僵尸
+-- 自动面对僵尸（原SDGT ELIT）
 local function isBehindWall(targetPart)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -462,7 +460,7 @@ local function scanTarget()
     currentTarget = closest
 end
 
--- ESP 透视
+-- ESP 透视（原SDGT ELIT）
 local function createESP(model, color, label)
     if espHighlights[model] then return end
     local torso = model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
@@ -569,7 +567,7 @@ oldIndex = hookmetamethod(game, "__index", function(self, index)
     return oldIndex(self, index)
 end)
 
--- ================= 无敌（碰飞）功能 =================
+-- ================= 无敌碰飞（修复版：不会导致自己死亡） =================
 local function findPlayer(text)
     text = text:lower()
     for _, plr in pairs(Players:GetPlayers()) do
@@ -590,14 +588,11 @@ LocalPlayer.Chatted:Connect(function(msg)
     end
 end)
 
-spawn(function()
+-- 吸附目标玩家（不修改自身速度，只移动位置）
+task.spawn(function()
     while wudiMoveLoopRunning do
-        wait()
-        if not CFG.WUDI_ON or not wudiTargetPlayer then
-            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-            if hum then hum:Move(Vector3.zero) end
-            continue
-        end
+        task.wait(0.03)
+        if not CFG.WUDI_ON or not wudiTargetPlayer then continue end
         local char = wudiTargetPlayer.Character
         if not char or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then
             wudiTargetPlayer = nil
@@ -607,6 +602,7 @@ spawn(function()
         local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
         local targetHRP = char:FindFirstChild("HumanoidRootPart")
         if myHRP and targetHRP then
+            -- 计算偏移：如果目标速度很小则贴脸，否则留一点距离防止飞过头
             local offset = targetHRP.Velocity.Magnitude < 0.1 and 0 or 7
             local goal = targetHRP.CFrame * CFrame.new(0,0,-offset) * CFrame.Angles(0, math.rad(-3), 0)
             myHRP.CFrame = myHRP.CFrame:Lerp(goal, 0.4)
@@ -616,38 +612,41 @@ spawn(function()
     end
 end)
 
-spawn(function()
-    while wudiPushLoopRunning do
-        wait()
-        if not CFG.WUDI_ON then
-            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-            if hum then hum:Move(Vector3.zero) end
-            continue
-        end
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-        if hum then hum:Move(Vector3.one * 1e31) end
+-- 拦截自伤（防止被自己或环境伤害）
+local oldForceSelfDamage
+oldForceSelfDamage = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+    if method == "FireServer" and tostring(self) == "ForceSelfDamage" then
+        if CFG.WUDI_ON then return nil end
     end
+    return oldForceSelfDamage(self, ...)
 end)
 
--- ================= 移动 Speed 增强 =================
-spawn(function()
-    while true do
-        wait()
+-- ================= 移动 Speed 增强（修复：单独控制，不与其他冲突） =================
+-- 移除原来的 walkSpeed 循环，只保留 CFG.SPEED_ENABLED 控制
+local speedLoopRunning = true
+task.spawn(function()
+    while speedLoopRunning do
+        task.wait(0.1)
         local char = LocalPlayer.Character
         if not char then continue end
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not hum then continue end
         if originalWalkSpeed == nil then originalWalkSpeed = hum.WalkSpeed end
         if CFG.SPEED_ENABLED then
-            hum.WalkSpeed = CFG.SPEED_VALUE
+            if hum.WalkSpeed ~= CFG.SPEED_VALUE then
+                hum.WalkSpeed = CFG.SPEED_VALUE
+            end
         else
-            hum.WalkSpeed = originalWalkSpeed
+            if hum.WalkSpeed ~= originalWalkSpeed then
+                hum.WalkSpeed = originalWalkSpeed
+            end
         end
     end
 end)
 
 LocalPlayer.CharacterAdded:Connect(function(char)
-    wait(0.5)
+    task.wait(0.5)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then
         if CFG.SPEED_ENABLED then
@@ -812,6 +811,7 @@ local function createFlyUI()
     MainFrame.Size = UDim2.new(0, 0, 0, 0)
     MainFrame:TweenSize(UDim2.new(0, 180, 0, 140), "Out", "Back", 0.5)
 
+    -- 飞行时免疫摔伤
     local mt = getrawmetatable(game)
     local oldNC = mt.__namecall
     setreadonly(mt, false)
@@ -822,7 +822,7 @@ local function createFlyUI()
     setreadonly(mt, true)
 end
 
--- ================= 杀戮光环全能（融合 GB 脚本） =================
+-- ================= 杀戮光环全能（修复版：正确调用武器远程事件） =================
 local KillAuraAllInOne = false
 local BayonetKillAura = false
 local BayonetAttackBarrels = false
@@ -853,10 +853,11 @@ local function distance(a, b)
     return (a.HumanoidRootPart.Position - b.HumanoidRootPart.Position).magnitude
 end
 
+-- 刺刀杀戮（使用 Musket 的刺刀）
 local function bayonetKillAuraLoop()
     while KillAuraAllInOne and BayonetKillAura do
         local character = getCharacter()
-        if not character or character:FindFirstChildOfClass("Humanoid").Health <= 0 then task.wait(0.1) continue end
+        if not character or not character:FindFirstChildOfClass("Humanoid") or character.Humanoid.Health <= 0 then task.wait(0.1) continue end
         local zombies = workspace:FindFirstChild("Zombies")
         if not zombies then task.wait(0.1) continue end
         local weapon = character:FindFirstChild("Musket") or LocalPlayer.Backpack:FindFirstChild("Musket")
@@ -867,16 +868,20 @@ local function bayonetKillAuraLoop()
         for _, zombie in pairs(zombies:GetChildren()) do
             if not (KillAuraAllInOne and BayonetKillAura) then break end
             if zombie:IsA("Model") and zombie:FindFirstChild("HumanoidRootPart") then
+                -- 跳过炸药桶（如果未启用攻击炸药桶）
                 if zombie:GetAttribute("Type") == "Barrel" and not BayonetAttackBarrels then continue end
                 if zombie:FindFirstChild("Barrel") then continue end
                 if distance(character, zombie) <= 15 then
                     local state = zombie:FindFirstChild("State")
                     if not state or state.Value ~= "Spawn" then
                         if BayonetAutoRotate then rotateToTarget(character, zombie) task.wait(0.05) end
-                        remoteEvent:FireServer("ThrustBayonet")
+                        -- 刺刀突刺
+                        pcall(function() remoteEvent:FireServer("ThrustBayonet") end)
                         task.wait(0.1)
                         local hitPart = zombie:FindFirstChild("Head") or zombie:FindFirstChild("HumanoidRootPart")
-                        if hitPart then remoteEvent:FireServer("Bayonet_HitZombie", zombie, hitPart.Position, true) end
+                        if hitPart then
+                            pcall(function() remoteEvent:FireServer("Bayonet_HitZombie", zombie, hitPart.Position, true) end)
+                        end
                     end
                 end
             end
@@ -885,6 +890,7 @@ local function bayonetKillAuraLoop()
     end
 end
 
+-- 肘击（使用 Axe 的眩晕）
 local function elbowStrikeLoop()
     while KillAuraAllInOne and ElbowStrike do
         local character = getCharacter()
@@ -902,11 +908,11 @@ local function elbowStrikeLoop()
                 if distance(character, zombie) <= 15 then
                     local state = zombie:FindFirstChild("State")
                     if state and state.Value == "Stunned" then continue end
-                    remoteEvent:FireServer("BraceBlock")
+                    pcall(function() remoteEvent:FireServer("BraceBlock") end)
                     task.wait(0.05)
-                    remoteEvent:FireServer("StopBraceBlock")
+                    pcall(function() remoteEvent:FireServer("StopBraceBlock") end)
                     task.wait(0.05)
-                    remoteEvent:FireServer("FeedbackStun", zombie, zombie.HumanoidRootPart.CFrame.Position)
+                    pcall(function() remoteEvent:FireServer("FeedbackStun", zombie, zombie.HumanoidRootPart.CFrame.Position) end)
                     task.wait(0.1)
                 end
             end
@@ -915,6 +921,7 @@ local function elbowStrikeLoop()
     end
 end
 
+-- 卡宾枪肘击（多目标眩晕）
 local function carbineStunLoop()
     while KillAuraAllInOne and CarbineStun do
         local character = getCharacter()
@@ -938,11 +945,11 @@ local function carbineStunLoop()
         local maxTargets = math.min(StunTargets, #zombiesInRange)
         if maxTargets > 0 then
             if maxTargets > 0 and zombiesInRange[1] then rotateToTarget(character, zombiesInRange[1]) task.wait(0.1) end
-            remoteEvent:FireServer("Shove")
+            pcall(function() remoteEvent:FireServer("Shove") end)
             task.wait(0.2)
             for i = 1, maxTargets do
                 local zombie = zombiesInRange[i]
-                remoteEvent:FireServer("FeedbackStun", zombie, zombie.HumanoidRootPart.CFrame.Position)
+                pcall(function() remoteEvent:FireServer("FeedbackStun", zombie, zombie.HumanoidRootPart.CFrame.Position) end)
                 if i < maxTargets then task.wait(0.1) end
             end
         end
@@ -1273,7 +1280,7 @@ task.spawn(function()
     end
 end)
 
--- ================= UI 部分（修复尺寸调整 + 统一字体） =================
+-- ================= UI 部分（完整保留，仅修改了 Speed 增强部分） =================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SDGT_Elite_Gui"
 ScreenGui.ResetOnSpawn = false
@@ -1291,7 +1298,6 @@ local FeatureStates, CategoryStates, ActiveSubUIs, SubUIFrames = {}, {}, {}, {}
 local UIStrokes, AllButtons, AllTitles = {}, {}, {}
 local CurrentTheme, ForcedTextColor, UseRainbowTitle, LockSubUIs, ShowStatus, UseTextGradient = "Dark", nil, false, true, true, true
 
--- Resize Handle 修复：确保可见且可拖拽
 local ResizeHandle = Instance.new("ImageButton")
 ResizeHandle.Size, ResizeHandle.AnchorPoint, ResizeHandle.BackgroundColor3, ResizeHandle.BackgroundTransparency, ResizeHandle.AutoButtonColor, ResizeHandle.Visible, ResizeHandle.ZIndex = UDim2.fromOffset(20, 20), Vector2.new(1, 1), Color3.fromRGB(255, 255, 255), 1, false, false, 100
 
@@ -1323,7 +1329,7 @@ end
 
 local BASE_WIDTH = 90
 local BASE_FONT_SIZE = 8
-local extraTextInputs = {} -- 存储需要统一字体的输入框
+local extraTextInputs = {}
 
 local function updateFontSizes()
     local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
@@ -1515,7 +1521,7 @@ local function toggleSubUI(name)
     else table.insert(ActiveSubUIs, target) if MainFrame.Visible then target.Visible = true end end
 end
 
--- 创建子窗口
+-- 创建子窗口（战斗、移动、视觉效果、玩家）
 local function createSubWindow(name, items)
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
@@ -1526,7 +1532,7 @@ local function createSubWindow(name, items)
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
     
     if name == "Combat" then
-        -- 原战斗功能
+        -- 原战斗功能（跳跃攻击、刺刀辅助、枪械模组）
         local jumpContainer = Instance.new("Frame")
         jumpContainer.Size, jumpContainer.BackgroundTransparency, jumpContainer.ClipsDescendants, jumpContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", jumpContainer).SortOrder = Enum.SortOrder.LayoutOrder
@@ -1590,7 +1596,7 @@ local function createSubWindow(name, items)
         local mortarTime = createFeatureButton(gunContainer, "Mortar Time", true, function() CFG.HAND_MORTAR_TIMING = CategoryStates["Mortar Time"] end)
         mortarTime.Text = "迫击炮时机"
         
-        -- 杀戮光环全能
+        -- 杀戮光环全能（修复版）
         local killAuraContainer = Instance.new("Frame")
         killAuraContainer.Size, killAuraContainer.BackgroundTransparency, killAuraContainer.ClipsDescendants, killAuraContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", killAuraContainer).SortOrder = Enum.SortOrder.LayoutOrder
@@ -1617,6 +1623,7 @@ local function createSubWindow(name, items)
     end
     
     if name == "Movement" then
+        -- 移动选项卡：Speed增强 + 丝滑飞行
         local speedContainer = Instance.new("Frame")
         speedContainer.Size, speedContainer.BackgroundTransparency, speedContainer.ClipsDescendants, speedContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", speedContainer).SortOrder = Enum.SortOrder.LayoutOrder
@@ -1674,13 +1681,12 @@ local function createSubWindow(name, items)
     end
     
     if name == "Player" then
+        -- 玩家选项卡：无敌(碰飞)、职业功能、地图功能
         -- 无敌碰飞
         local wudiBtn = createFeatureButton(subScroll, "无敌", false, function()
             CFG.WUDI_ON = not CFG.WUDI_ON
             if not CFG.WUDI_ON then
                 wudiTargetPlayer = nil
-                local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-                if hum then hum:Move(Vector3.zero) end
             end
         end)
         wudiBtn.Text = "无敌(碰飞)"
@@ -1776,7 +1782,6 @@ local function createSubWindow(name, items)
     SubUIFrames[name] = sub
 end
 
--- UI设置子窗口
 local function createSettingSub()
     local name = "UI Setup"
     local sub = createBaseFrame(name.."_Sub")
@@ -1825,6 +1830,7 @@ end
 -- Resize 拖拽逻辑（修复）
 local isResizing = false
 local lastActiveFrame = nil
+local dragStart, startSize
 local function initResizeLogic()
     ResizeHandle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1909,3 +1915,5 @@ updateFontSizes()
 
 -- 全局通知函数（供职业功能使用）
 _G.Library = { Notify = function(opt) pcall(function() warn("[Notify]", opt.Title, opt.Description) end) end }
+
+print("SDGT ELIT 完整整合版已加载（修复杀戮光环、无敌碰飞、Speed增强）")
