@@ -1,17 +1,6 @@
--- ================= SDGT ELIT · 最终整合版（完整功能，稳定布局） =================
--- 基于 zzcsz自己复原文字.txt 的 UI 框架，整合 GB (1).txt 的全部功能
--- 参考 Vape V4 的菜单布局，添加了职业功能、地图功能等
--- 所有子窗口位置固定，不会乱跑；支持主题切换、字体缩放、彩虹标题等
-
--- 主要功能分类：
--- 战斗功能：杀戮光环、刺刀辅助、肘击、自动射击等
--- 移动功能：飞行绕过、移动速度等
--- 视觉效果：僵尸透视、玩家透视、全图高亮等
--- 玩家功能：半无敌、自救、自动跳跃等
--- 职业功能：医疗兵（自动治疗）、工兵（自动修复）、牧师（自动祝福）
--- 地图功能：自动敲钟、自动水桶灭火、自动修桥、自动拿木头/放木头
--- 枪械功能：自动射击、静默瞄准、自动装填、FOV设置等
--- 界面设置：主题、拖拽、字体缩放等
+-- ================= SDGT ELIT 最终稳定版（完整功能，不破坏 UI） =================
+-- 基于 zzcsz自己复原文字.txt 的 UI 框架，整合 GB (1).txt 全部功能
+-- 保留所有原有 UI 特性：主按钮 S 可拖拽，子窗口可拖拽，主题切换，字体缩放，彩虹标题等
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -30,7 +19,7 @@ local Camera = workspace:WaitForChild("Camera")
 
 -- ========== 配置表 ==========
 local CFG = {
-    -- 战斗功能
+    -- 战斗
     KILLAURA = false,
     KILLAURA_RANGE = 19,
     KILLAURA_SPAM_COUNT = 1,
@@ -45,7 +34,16 @@ local CFG = {
     ELBOW_STRIKE = false,
     CARBINE_STUN = false,
     STUN_TARGETS = 5,
-    -- 移动功能
+    -- 枪械
+    AUTO_SHOOT_BOMBER = false,
+    AUTO_SHOOT_CAVALRY = false,
+    AUTO_SHOOT_RUNNER = false,
+    AUTO_SHOOT_ELECTROCUTIONER = false,
+    AUTO_SHOOT_IGNITER = false,
+    AUTO_SHOOT_MAX_RANGE = 200,
+    AUTO_SHOOT_WALL_CHECK = true,
+    AUTO_RELOAD = false,
+    -- 移动
     FLY_ENABLED = false,
     FLY_SPEED = 35,
     WALK_SPEED = 16,
@@ -65,35 +63,45 @@ local CFG = {
     SHOW_INFECTED = false,
     FULLBRIGHT = false,
     NO_FOG = false,
-    -- 玩家功能
+    -- 玩家
     HALF_WUDI = false,
     SELF_RESCUE = false,
     AUTO_JUMP = false,
     KEEP_BACKPACK = false,
     NO_SLOW = false,
-    -- 职业功能
+    -- 职业
     AUTO_REQUEST_HEAL = false,
     HEAL_THRESHOLD = 25,
     AUTO_REPAIR = false,
     AUTO_BLESS = false,
     BLESS_THRESHOLD = 50,
-    -- 地图功能
+    -- 地图
     AUTO_BELL = false,
     AUTO_BUCKET = false,
     AUTO_REPAIR_BRIDGE = false,
     AUTO_GET_LOGS = false,
     AUTO_PLACE_LOGS = false,
     AUTO_SPEED = 100,
-    -- 枪械功能
-    AUTO_SHOOT_BOMBER = false,
-    AUTO_SHOOT_CAVALRY = false,
-    AUTO_SHOOT_RUNNER = false,
-    AUTO_SHOOT_ELECTROCUTIONER = false,
-    AUTO_SHOOT_IGNITER = false,
-    AUTO_SHOOT_MAX_RANGE = 200,
-    AUTO_SHOOT_WALL_CHECK = true,
-    AUTO_RELOAD = false,
 }
+
+-- ========== 辅助函数 ==========
+local function isGun(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    local animFolder = tool:FindFirstChild("Animations")
+    return animFolder and (animFolder:FindFirstChild("Aim") or animFolder:FindFirstChild("Aiming"))
+end
+
+local function getShotsLoaded(tool)
+    if not tool then return 0 end
+    local s = tool:FindFirstChild("ShotsLoaded")
+    if s and (s:IsA("IntValue") or s:IsA("NumberValue")) then return s.Value end
+    return 0
+end
+
+local function findRemote(tool)
+    if not tool then return nil end
+    return tool:FindFirstChild("RemoteEvent")
+end
 
 -- ========== 飞行绕过独立 UI ==========
 local flyScreenGui = nil
@@ -229,7 +237,7 @@ local function createFlyUI()
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then update(input) end
     end)
 
-    -- 关闭和最小化按钮
+    -- 关闭和最小化
     local function topBtn(t, x, c, f)
         local b = Instance.new("TextButton", MainFrame)
         b.Size = UDim2.new(0, 25, 0, 25)
@@ -253,7 +261,7 @@ local function createFlyUI()
     MainFrame:TweenSize(UDim2.new(0, 180, 0, 140), "Out", "Back", 0.5)
 end
 
--- ========== 半无敌（碰飞）功能 ==========
+-- ========== 半无敌（碰飞） ==========
 local halfWudiTarget = nil
 local halfWudiRunning = true
 
@@ -316,7 +324,7 @@ spawn(function()
     end
 end)
 
--- ========== 杀戮光环 ==========
+-- ========== 杀戮光环（近战） ==========
 local function getNearestZombie(range)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -488,24 +496,6 @@ spawn(function()
 end)
 
 -- ========== 自动射击（枪械） ==========
-local function isGun(tool)
-    if not tool or not tool:IsA("Tool") then return false end
-    local animFolder = tool:FindFirstChild("Animations")
-    return animFolder and (animFolder:FindFirstChild("Aim") or animFolder:FindFirstChild("Aiming"))
-end
-
-local function getShotsLoaded(tool)
-    if not tool then return 0 end
-    local s = tool:FindFirstChild("ShotsLoaded")
-    if s and (s:IsA("IntValue") or s:IsA("NumberValue")) then return s.Value end
-    return 0
-end
-
-local function findRemote(tool)
-    if not tool then return nil end
-    return tool:FindFirstChild("RemoteEvent")
-end
-
 local function getNearestTargetByType(matcher)
     local origin = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and LocalPlayer.Character.Head.Position or Camera.CFrame.Position
     if not origin then return nil, nil
@@ -885,7 +875,7 @@ local function setupSelfRescue()
     end
 end
 
--- 自动跳跃（刺击时跳跃）
+-- 自动跳跃
 local autoJumpAnimator = nil
 local autoJumpMonitoring = false
 local autoJumpPlayedTracks = {}
@@ -1186,7 +1176,7 @@ spawn(function()
     end
 end)
 
--- ========== SDGT ELIT UI 框架 ==========
+-- ========== UI 部分（基于 zzcsz自己复原文字.txt，未改动任何原有逻辑） ==========
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SDGT_Elite_Gui"
 ScreenGui.ResetOnSpawn = false
@@ -1415,7 +1405,7 @@ local function toggleSubUI(name)
     else table.insert(ActiveSubUIs, target) if MainFrame.Visible then target.Visible = true end end
 end
 
--- 创建各个子窗口
+-- 创建子窗口（战斗功能、移动功能、视觉效果、玩家功能、职业功能、地图功能、界面设置）
 local function createSubWindow(name, items)
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
@@ -1425,7 +1415,6 @@ local function createSubWindow(name, items)
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
 
     if name == "战斗功能" then
-        -- 杀戮光环
         createFeatureButton(subScroll, "杀戮光环", false, function(s) CFG.KILLAURA = s end)
         local rangeBtn = createFeatureButton(subScroll, "杀戮光环范围", false, function() end, true)
         rangeBtn.Text = "范围: " .. CFG.KILLAURA_RANGE
