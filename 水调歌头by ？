@@ -1,4 +1,4 @@
--- ================= SDGT ELIT 完整版（集成 GB 所有功能，无 Hook，全兼容） =================
+-- ================= SDGT ELIT 稳定版（仅基础功能 + 飞行 + 半无敌） =================
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
@@ -6,189 +6,251 @@ local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local GuiService = game:GetService("GuiService")
 local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Camera = workspace:WaitForChild("Camera")
 
--- ========== 配置表 ==========
+-- ========== 配置 ==========
 local CFG = {
-    -- 飞行
-    FLY_ENABLED = false,
-    FLY_SPEED = 35,
-    -- 移动
-    WALK_SPEED = 16,
-    WALK_SPEED_ENABLED = false,
-    -- 杀戮光环
-    KILLAURA_ENABLED = false,
+    KILLAURA = false,        -- 核心杀戮
+    AUTO_FACE = false,       -- 自动面向
     KILLAURA_RANGE = 19,
-    KILLAURA_SPAM_COUNT = 1,
-    KILLAURA_MULTI_TARGET = 1,
-    KILLAURA_TARGET_ESP = false,
-    KILLAURA_FOV_ENABLED = false,
-    KILLAURA_FOV_SIZE = 90,
-    KILLAURA_AUTO_LOOK = false,
-    -- 刺刀杀戮光环
-    BAYONET_KILLAURA = false,
-    BAYONET_ATTACK_BARRELS = false,
-    BAYONET_AUTO_ROTATE = false,
-    -- 肘击
-    ELBOW_STRIKE = false,
-    CARBINE_STUN = false,
-    STUN_TARGETS = 5,
-    -- 自动射击
-    AUTO_SHOOT_BOMBER = false,
-    AUTO_SHOOT_CAVALRY = false,
-    AUTO_SHOOT_RUNNER = false,
-    AUTO_SHOOT_ELECTROCUTIONER = false,
-    AUTO_SHOOT_IGNITER = false,
-    AUTO_SHOOT_MAX_RANGE = 200,
-    AUTO_SHOOT_WALL_CHECK = true,
-    AUTO_RELOAD = false,
-    -- 透视
-    ESP_BOMBER = false,
-    ESP_CUIRASSIER = false,
-    ESP_RUNNER = false,
-    ESP_ZAPPER = false,
-    ESP_IGNITER = false,
-    ESP_SHOW_BILLBOARDS = false,
-    ESP_CHAMS_TRANSPARENCY = 0.6,
-    -- 玩家透视
-    PLAYER_CHAMS = false,
-    PLAYER_BILLBOARD = false,
-    NOTIFY_LOW_HEALTH = false,
-    NOTIFY_GRABBED_PINNED = false,
-    SHOW_INFECTED = false,
-    -- 职业功能
-    AUTO_REQUEST_HEAL = false,
-    HEAL_THRESHOLD = 25,
-    AUTO_REPAIR = false,
-    AUTO_BLESS = false,
-    BLESS_THRESHOLD = 50,
-    -- 地图自动化
-    AUTO_BELL = false,
-    AUTO_BUCKET = false,
-    AUTO_REPAIR_BRIDGE = false,
-    AUTO_GET_LOGS = false,
-    AUTO_PLACE_LOGS = false,
-    AUTO_SPEED = 100,
-    -- 其他
-    FULLBRIGHT = false,
-    NO_FOG = false,
-    HITBOX_EXPANDER = false,
-    HITBOX_SIZE = 10,
-    HITBOX_RANGE = 30,
-    KEEP_BACKPACK = false,
-    NO_SLOW = false,
-    SELF_RESCUE = false,
-    AUTO_JUMP = false,
+    ESP = false,             -- 僵尸透视
+    FULLBRIGHT = false,      -- 全图高亮
+    LOOP_SPEED = 16,         -- 移动速度
+    HALF_WUDI = false,       -- 半无敌
 }
 
--- ========== 辅助函数 ==========
-local function isGun(tool)
-    if not tool or not tool:IsA("Tool") then return false end
-    local animFolder = tool:FindFirstChild("Animations")
-    return animFolder and (animFolder:FindFirstChild("Aim") or animFolder:FindFirstChild("Aiming"))
-end
+-- ========== 半无敌（碰飞）功能 ==========
+local halfWudiTarget = nil
+local halfWudiRunning = true
 
-local function getShotsLoaded(tool)
-    if not tool then return 0 end
-    local s = tool:FindFirstChild("ShotsLoaded")
-    if s and (s:IsA("IntValue") or s:IsA("NumberValue")) then return s.Value end
-    return 0
-end
-
-local function findRemote(tool)
-    if not tool then return nil end
-    return tool:FindFirstChild("RemoteEvent")
-end
-
--- ========== 飞行模块 ==========
-local flyBodyVelocity, flyBodyGyro, flyAnimCache, flyCtrl = nil, nil, nil, nil
-local flyConnection = nil
-
-local function getFlyControl()
-    if flyCtrl then return flyCtrl end
-    local success, module = pcall(function()
-        return require(LocalPlayer.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
-    end)
-    if success then flyCtrl = module; return module end
-    return nil
-end
-
-local function startFly()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChild("Humanoid")
-    if not hrp or not hum then return end
-    local animate = char:FindFirstChild("Animate")
-    if animate then flyAnimCache = animate; animate.Parent = nil end
-    flyBodyVelocity = Instance.new("BodyVelocity", hrp)
-    flyBodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-    flyBodyGyro = Instance.new("BodyGyro", hrp)
-    flyBodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
-    flyBodyGyro.P = 8000
-    flyConnection = RunService.RenderStepped:Connect(function()
-        if not CFG.FLY_ENABLED then return end
-        local ctrl = getFlyControl()
-        if not ctrl then return end
-        local moveVec = ctrl:GetMoveVector()
-        local camCF = Camera.CFrame
-        local moveDir = (camCF.LookVector * -moveVec.Z) + (camCF.RightVector * moveVec.X)
-        if moveVec.Magnitude > 0 then
-            flyBodyVelocity.Velocity = moveDir.Unit * CFG.FLY_SPEED
-            flyBodyGyro.CFrame = CFrame.new(Vector3.zero, moveDir)
-        else
-            flyBodyVelocity.Velocity = Vector3.new(0, 0.01, 0)
-            flyBodyGyro.CFrame = CFrame.new(Vector3.zero, Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z))
-        end
-        hum:ChangeState(Enum.HumanoidStateType.Climbing)
-    end)
-end
-
-local function stopFly()
-    if flyConnection then flyConnection:Disconnect(); flyConnection = nil end
-    if flyBodyVelocity then flyBodyVelocity:Destroy(); flyBodyVelocity = nil end
-    if flyBodyGyro then flyBodyGyro:Destroy(); flyBodyGyro = nil end
-    if flyAnimCache and LocalPlayer.Character then flyAnimCache.Parent = LocalPlayer.Character; flyAnimCache = nil end
-    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-    if hum and hum:GetState() == Enum.HumanoidStateType.Climbing then hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
-end
-
--- 移动速度循环
-local walkConn = nil
-local function setupWalkSpeed()
-    if CFG.WALK_SPEED_ENABLED then
-        if walkConn then walkConn:Disconnect() end
-        walkConn = RunService.Heartbeat:Connect(function()
-            local char = LocalPlayer.Character
-            if char then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum then hum.WalkSpeed = CFG.WALK_SPEED end
-            end
-        end)
-    else
-        if walkConn then walkConn:Disconnect(); walkConn = nil end
-        local char = LocalPlayer.Character
-        if char then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then hum.WalkSpeed = 16 end
+local function findPlayer(text)
+    text = text:lower()
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr.Name:lower():find(text) or plr.DisplayName:lower():find(text) then
+            return plr
         end
     end
 end
 
--- ========== 杀戮光环核心（近战武器） ==========
+LocalPlayer.Chatted:Connect(function(msg)
+    if not CFG.HALF_WUDI then return end
+    if msg:sub(1,6):lower() == ";kill " then
+        local name = msg:sub(7)
+        local plr = findPlayer(name)
+        if plr and plr.Character and plr.Character:FindFirstChild("Humanoid") then
+            halfWudiTarget = plr
+        end
+    end
+end)
+
+spawn(function()
+    while halfWudiRunning do
+        wait()
+        if not CFG.HALF_WUDI or not halfWudiTarget then
+            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+            if hum then hum:Move(Vector3.zero) end
+            continue
+        end
+        local char = halfWudiTarget.Character
+        if not char or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then
+            halfWudiTarget = nil
+            continue
+        end
+        local myChar = LocalPlayer.Character
+        local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        local targetHRP = char:FindFirstChild("HumanoidRootPart")
+        if myHRP and targetHRP then
+            local offset = targetHRP.Velocity.Magnitude < 0.1 and 0 or 7
+            local goal = targetHRP.CFrame * CFrame.new(0,0,-offset) * CFrame.Angles(0, math.rad(-3), 0)
+            myHRP.CFrame = myHRP.CFrame:Lerp(goal, 0.4)
+            myHRP.Velocity = Vector3.new(0,0,0)
+            myHRP.RotVelocity = Vector3.new(0,0,0)
+        end
+    end
+end)
+
+spawn(function()
+    while halfWudiRunning do
+        wait()
+        if not CFG.HALF_WUDI then
+            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+            if hum then hum:Move(Vector3.zero) end
+            continue
+        end
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+        if hum then hum:Move(Vector3.one * 1e31) end
+    end
+end)
+
+-- ========== 飞行绕过独立 UI（完全原样） ==========
+local flyScreenGui = nil
+local function createFlyUI()
+    if flyScreenGui then flyScreenGui:Destroy() end
+    flyScreenGui = Instance.new("ScreenGui", PlayerGui)
+    flyScreenGui.Name = "FlyUI"
+    flyScreenGui.ResetOnSpawn = false
+
+    local MainFrame = Instance.new("Frame", flyScreenGui)
+    MainFrame.Size = UDim2.new(0, 180, 0, 140)
+    MainFrame.Position = UDim2.new(0.5, -90, 0.4, 0)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.ClipsDescendants = true
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 15)
+
+    local Title = Instance.new("TextLabel", MainFrame)
+    Title.Size = UDim2.new(1, 0, 0, 30)
+    Title.BackgroundTransparency = 1
+    Title.Text = "官方飞行"
+    Title.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    Title.TextSize = 12
+
+    local SpeedInput = Instance.new("TextBox", MainFrame)
+    SpeedInput.Size = UDim2.new(0, 140, 0, 30)
+    SpeedInput.Position = UDim2.new(0.5, -70, 0, 40)
+    SpeedInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    SpeedInput.Text = "35"
+    SpeedInput.TextColor3 = Color3.new(1, 1, 1)
+    Instance.new("UICorner", SpeedInput).CornerRadius = UDim.new(0, 8)
+
+    local Toggle = Instance.new("TextButton", MainFrame)
+    Toggle.Size = UDim2.new(0, 140, 0, 40)
+    Toggle.Position = UDim2.new(0.5, -70, 0, 85)
+    Toggle.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    Toggle.Text = "丝滑飞行: OFF"
+    Toggle.TextColor3 = Color3.new(1, 1, 1)
+    Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 10)
+
+    local isFlying = false
+    local flySpeed = 35
+    local bv, bg, animCache, flyCtrl
+
+    local function getFlyControl()
+        if flyCtrl then return flyCtrl end
+        local success, module = pcall(function()
+            return require(LocalPlayer.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
+        end)
+        if success then flyCtrl = module; return module end
+        return nil
+    end
+
+    local function startFly()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        if not hrp or not hum then return end
+        local animate = char:FindFirstChild("Animate")
+        if animate then animCache = animate; animate.Parent = nil end
+        bv = Instance.new("BodyVelocity", hrp)
+        bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+        bg = Instance.new("BodyGyro", hrp)
+        bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+        bg.P = 8000
+        spawn(function()
+            local ctrl = getFlyControl()
+            while isFlying and char and char.Parent do
+                if ctrl then
+                    local moveVec = ctrl:GetMoveVector()
+                    local camCF = Camera.CFrame
+                    local moveDir = (camCF.LookVector * -moveVec.Z) + (camCF.RightVector * moveVec.X)
+                    if moveVec.Magnitude > 0 then
+                        bv.Velocity = moveDir.Unit * flySpeed
+                        bg.CFrame = CFrame.new(Vector3.zero, moveDir)
+                    else
+                        bv.Velocity = Vector3.new(0, 0.01, 0)
+                        bg.CFrame = CFrame.new(Vector3.zero, Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z))
+                    end
+                    hum:ChangeState(Enum.HumanoidStateType.Climbing)
+                end
+                RunService.RenderStepped:Wait()
+            end
+            if animCache then animCache.Parent = char end
+            if bv then bv:Destroy() end
+            if bg then bg:Destroy() end
+        end)
+    end
+
+    local function stopFly()
+        isFlying = false
+        if bv then bv:Destroy(); bv=nil end
+        if bg then bg:Destroy(); bg=nil end
+        if animCache and LocalPlayer.Character then
+            animCache.Parent = LocalPlayer.Character
+            animCache = nil
+        end
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+        if hum and hum:GetState() == Enum.HumanoidStateType.Climbing then
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end
+
+    Toggle.MouseButton1Click:Connect(function()
+        isFlying = not isFlying
+        flySpeed = tonumber(SpeedInput.Text) or 35
+        Toggle.Text = isFlying and "已开启 - 运行中" or "丝滑飞行: OFF"
+        TweenService:Create(Toggle, TweenInfo.new(0.3), {BackgroundColor3 = isFlying and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(60, 60, 60)}):Play()
+        if isFlying then startFly() else stopFly() end
+    end)
+
+    -- 拖动逻辑
+    local dragging, dragStart, startPos
+    local function update(input)
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+    MainFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    MainFrame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragStart = input.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then update(input) end
+    end)
+
+    -- 关闭和最小化按钮
+    local function topBtn(t, x, c, f)
+        local b = Instance.new("TextButton", MainFrame)
+        b.Size = UDim2.new(0, 25, 0, 25)
+        b.Position = UDim2.new(1, x, 0, 5)
+        b.Text = t
+        b.BackgroundColor3 = c
+        b.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+        b.MouseButton1Click:Connect(f)
+    end
+    topBtn("×", -30, Color3.fromRGB(150,50,50), function() isFlying = false; flyScreenGui:Destroy(); flyScreenGui=nil end)
+    topBtn("-", -60, Color3.fromRGB(70,70,70), function()
+        local collapsed = MainFrame.Size.Y.Offset < 140
+        local targetH = collapsed and 140 or 35
+        TweenService:Create(MainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {Size = UDim2.new(0, 180, 0, targetH)}):Play()
+        Toggle.Visible = collapsed
+        SpeedInput.Visible = collapsed
+    end)
+
+    MainFrame.Size = UDim2.new(0, 0, 0, 0)
+    MainFrame:TweenSize(UDim2.new(0, 180, 0, 140), "Out", "Back", 0.5)
+end
+
+-- ========== 杀戮光环（近战） ==========
 local function getNearestZombie(range)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil, nil
+    if not hrp then return nil
     local closest, bestDist = nil, range
     local zombies = Workspace:FindFirstChild("Zombies")
-    if not zombies then return nil, nil
+    if not zombies then return nil
     for _, z in ipairs(zombies:GetChildren()) do
         if z:IsA("Model") then
             local zr = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso")
@@ -202,7 +264,7 @@ local function getNearestZombie(range)
             end
         end
     end
-    return closest, bestDist
+    return closest
 end
 
 local function getWeaponRemote()
@@ -213,21 +275,19 @@ local function getWeaponRemote()
     return tool:FindFirstChild("RemoteEvent")
 end
 
--- 杀戮光环主循环
 spawn(function()
     while true do
         wait(0.1)
-        if not CFG.KILLAURA_ENABLED then continue end
-        local target, dist = getNearestZombie(CFG.KILLAURA_RANGE)
-        if target then
-            local remote = getWeaponRemote()
-            if remote then
-                local head = target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart")
-                if head then
-                    for _ = 1, CFG.KILLAURA_SPAM_COUNT do
+        if CFG.KILLAURA then
+            local target = getNearestZombie(CFG.KILLAURA_RANGE)
+            if target then
+                local remote = getWeaponRemote()
+                if remote then
+                    local head = target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart")
+                    if head then
                         pcall(function()
                             remote:FireServer("Swing", "Thrust")
-                            wait(0.01)
+                            wait(0.05)
                             remote:FireServer("HitZombie", target, head.Position, true, Vector3.new(0,15,0), "Head", Vector3.new(0,1,0))
                         end)
                     end
@@ -241,8 +301,8 @@ end)
 spawn(function()
     while true do
         wait(0.05)
-        if CFG.KILLAURA_AUTO_LOOK then
-            local target, _ = getNearestZombie(30)
+        if CFG.AUTO_FACE then
+            local target = getNearestZombie(CFG.KILLAURA_RANGE)
             if target then
                 local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                 local tRoot = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Torso")
@@ -254,933 +314,72 @@ spawn(function()
     end
 end)
 
--- 杀戮光环目标ESP（BillboardGui）
-local targetDotGui = nil
-local function updateTargetESP()
-    if not CFG.KILLAURA_TARGET_ESP then
-        if targetDotGui then targetDotGui.Enabled = false end
-        return
-    end
-    local target, _ = getNearestZombie(CFG.KILLAURA_RANGE)
-    if target then
-        local head = target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart")
-        if head then
-            if not targetDotGui then
-                targetDotGui = Instance.new("BillboardGui")
-                targetDotGui.Size = UDim2.new(0, 20, 0, 20)
-                targetDotGui.AlwaysOnTop = true
-                local frame = Instance.new("Frame", targetDotGui)
-                frame.Size = UDim2.new(1,0,1,0)
-                frame.BackgroundColor3 = Color3.fromRGB(255,0,0)
-                local corner = Instance.new("UICorner", frame)
-                corner.CornerRadius = UDim.new(1,0)
-                targetDotGui.Parent = head
-            else
-                targetDotGui.Adornee = head
-            end
-            targetDotGui.Enabled = true
-        end
-    else
-        if targetDotGui then targetDotGui.Enabled = false end
-    end
-end
-
--- FOV圆圈（ScreenGui）
-local fovGui, fovCircle = nil, nil
-local function updateFOVCircle()
-    if CFG.KILLAURA_FOV_ENABLED and CFG.KILLAURA_TARGET_ESP then
-        if not fovGui then
-            fovGui = Instance.new("ScreenGui", PlayerGui)
-            fovGui.Name = "FOVGui"
-            fovGui.ResetOnSpawn = false
-            fovCircle = Instance.new("Frame", fovGui)
-            fovCircle.AnchorPoint = Vector2.new(0.5,0.5)
-            fovCircle.BackgroundTransparency = 1
-            local stroke = Instance.new("UIStroke", fovCircle)
-            stroke.Thickness = 2
-            stroke.Color = Color3.fromRGB(255,255,0)
-            stroke.Transparency = 0.3
-            Instance.new("UICorner", fovCircle).CornerRadius = UDim.new(1,0)
-        end
-        fovGui.Enabled = true
-        local cam = Camera
-        if cam then
-            local sizePx = (CFG.KILLAURA_FOV_SIZE / 40) * 250
-            fovCircle.Size = UDim2.new(0, sizePx, 0, sizePx)
-            local mousePos = UserInputService:GetMouseLocation()
-            local inset = GuiService:GetGuiInset()
-            local center = mousePos - Vector2.new(inset.X, inset.Y)
-            fovCircle.Position = UDim2.new(center.X / cam.ViewportSize.X, 0, center.Y / cam.ViewportSize.Y, 0)
-        end
-    else
-        if fovGui then fovGui.Enabled = false end
-    end
-end
-
-RunService.RenderStepped:Connect(function()
-    updateTargetESP()
-    updateFOVCircle()
-end)
-
--- ========== 刺刀杀戮光环 ==========
-spawn(function()
-    while true do
-        wait(0.1)
-        if not CFG.BAYONET_KILLAURA then continue end
-        local char = LocalPlayer.Character
-        if not char then continue end
-        local weapon = char:FindFirstChild("Musket") or LocalPlayer.Backpack:FindFirstChild("Musket")
-        if not weapon then continue end
-        if weapon.Parent ~= char then weapon.Parent = char; wait(0.2) end
-        local remote = weapon:FindFirstChild("RemoteEvent")
-        if not remote then continue end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then continue end
-        local zombies = Workspace:FindFirstChild("Zombies")
-        if not zombies then continue end
-        for _, z in ipairs(zombies:GetChildren()) do
-            if z:IsA("Model") and z:FindFirstChild("HumanoidRootPart") then
-                if not CFG.BAYONET_ATTACK_BARRELS and z:FindFirstChild("Barrel") then continue end
-                if (hrp.Position - z.HumanoidRootPart.Position).Magnitude <= 15 then
-                    if CFG.BAYONET_AUTO_ROTATE then
-                        hrp.CFrame = CFrame.new(hrp.Position, Vector3.new(z.HumanoidRootPart.Position.X, hrp.Position.Y, z.HumanoidRootPart.Position.Z))
-                    end
-                    pcall(function() remote:FireServer("ThrustBayonet") end)
-                    wait(0.1)
-                    local head = z:FindFirstChild("Head") or z:FindFirstChild("HumanoidRootPart")
-                    if head then pcall(function() remote:FireServer("Bayonet_HitZombie", z, head.Position, true) end) end
-                end
-            end
-        end
-    end
-end)
-
--- ========== 肘击 ==========
-spawn(function()
-    while true do
-        wait(0.2)
-        local char = LocalPlayer.Character
-        if not char then continue end
-        if CFG.ELBOW_STRIKE then
-            local weapon = char:FindFirstChild("Axe") or LocalPlayer.Backpack:FindFirstChild("Axe")
-            if weapon then
-                if weapon.Parent ~= char then weapon.Parent = char; wait(0.2) end
-                local remote = weapon:FindFirstChild("RemoteEvent")
-                if remote then
-                    local zombies = Workspace:FindFirstChild("Zombies")
-                    if zombies then
-                        for _, z in ipairs(zombies:GetChildren()) do
-                            if z:IsA("Model") and z:FindFirstChild("HumanoidRootPart") then
-                                if (char.HumanoidRootPart.Position - z.HumanoidRootPart.Position).Magnitude <= 15 then
-                                    pcall(function()
-                                        remote:FireServer("BraceBlock")
-                                        wait(0.05)
-                                        remote:FireServer("StopBraceBlock")
-                                        remote:FireServer("FeedbackStun", z, z.HumanoidRootPart.CFrame.Position)
-                                    end)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        if CFG.CARBINE_STUN then
-            local weapon = char:FindFirstChild("Carbine") or LocalPlayer.Backpack:FindFirstChild("Carbine")
-            if weapon then
-                if weapon.Parent ~= char then weapon.Parent = char; wait(0.2) end
-                local remote = weapon:FindFirstChild("RemoteEvent")
-                if remote then
-                    local zombies = Workspace:FindFirstChild("Zombies")
-                    if zombies then
-                        local inRange = {}
-                        for _, z in ipairs(zombies:GetChildren()) do
-                            if z:IsA("Model") and z:FindFirstChild("HumanoidRootPart") then
-                                local dist = (char.HumanoidRootPart.Position - z.HumanoidRootPart.Position).Magnitude
-                                if dist <= 15 then table.insert(inRange, z) end
-                            end
-                        end
-                        table.sort(inRange, function(a,b) return (a.HumanoidRootPart.Position - char.HumanoidRootPart.Position).Magnitude < (b.HumanoidRootPart.Position - char.HumanoidRootPart.Position).Magnitude end)
-                        local maxTargets = math.min(CFG.STUN_TARGETS, #inRange)
-                        if maxTargets > 0 then
-                            if inRange[1] then
-                                char.HumanoidRootPart.CFrame = CFrame.new(char.HumanoidRootPart.Position, Vector3.new(inRange[1].HumanoidRootPart.Position.X, char.HumanoidRootPart.Position.Y, inRange[1].HumanoidRootPart.Position.Z))
-                            end
-                            pcall(function() remote:FireServer("Shove") end)
-                            wait(0.2)
-                            for i = 1, maxTargets do
-                                pcall(function() remote:FireServer("FeedbackStun", inRange[i], inRange[i].HumanoidRootPart.CFrame.Position) end)
-                                if i < maxTargets then wait(0.1) end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- ========== 自动射击（枪械） ==========
-local function getNearestTargetByType(matcher)
-    local origin = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and LocalPlayer.Character.Head.Position or Camera.CFrame.Position
-    if not origin then return nil, nil
-    local bestPart, bestDist = nil, CFG.AUTO_SHOOT_MAX_RANGE + 1
-    local zombies = Workspace:FindFirstChild("Zombies")
-    if not zombies then return nil, nil
-    for _, model in ipairs(zombies:GetChildren()) do
-        if model:IsA("Model") and matcher(model) then
-            local hum = model:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local aimPart = model:FindFirstChild("Head") or model:FindFirstChild("HumanoidRootPart")
-                if aimPart then
-                    local d = (aimPart.Position - origin).Magnitude
-                    if d <= CFG.AUTO_SHOOT_MAX_RANGE and d < bestDist then
-                        if CFG.AUTO_SHOOT_WALL_CHECK then
-                            local params = RaycastParams.new()
-                            params.FilterDescendantsInstances = {LocalPlayer.Character, model}
-                            params.FilterType = Enum.RaycastFilterType.Blacklist
-                            local res = Workspace:Raycast(origin, (aimPart.Position - origin), params)
-                            if not res then bestPart, bestDist = aimPart, d end
-                        else
-                            bestPart, bestDist = aimPart, d
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return bestPart, bestDist
-end
-
-spawn(function()
-    while true do
-        wait(0.1)
-        local anyEnabled = CFG.AUTO_SHOOT_BOMBER or CFG.AUTO_SHOOT_CAVALRY or CFG.AUTO_SHOOT_RUNNER or CFG.AUTO_SHOOT_ELECTROCUTIONER or CFG.AUTO_SHOOT_IGNITER
-        if not anyEnabled then continue end
-        local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
-        if not tool or not isGun(tool) then continue end
-        if getShotsLoaded(tool) == 0 then continue end
-        local matchers = {
-            [CFG.AUTO_SHOOT_BOMBER] = function(m) return m:FindFirstChild("Barrel") ~= nil end,
-            [CFG.AUTO_SHOOT_CAVALRY] = function(m) return m:FindFirstChild("Sword") ~= nil end,
-            [CFG.AUTO_SHOOT_RUNNER] = function(m) return m:FindFirstChild("Eye") and not m:FindFirstChild("Axe") end,
-            [CFG.AUTO_SHOOT_ELECTROCUTIONER] = function(m) return m:FindFirstChild("Axe") ~= nil end,
-            [CFG.AUTO_SHOOT_IGNITER] = function(m) return m:FindFirstChild("Whale Oil Lantern") ~= nil end,
-        }
-        local bestPart = nil
-        for enabled, matcher in pairs(matchers) do
-            if enabled then
-                local p, _ = getNearestTargetByType(matcher)
-                if p then bestPart = p end
-            end
-        end
-        if bestPart then
-            local remote = findRemote(tool)
-            if remote then
-                pcall(function() remote:FireServer("Fire", LocalPlayer.Character:FindFirstChild("Model") or LocalPlayer.Character, bestPart.Position, Workspace:GetServerTimeNow()) end)
-            end
-        end
-    end
-end)
-
--- 自动装填监听
-LocalPlayer.CharacterAdded:Connect(function(char)
-    wait(0.5)
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") and isGun(tool) then
-            tool.Equipped:Connect(function()
-                if CFG.AUTO_RELOAD then
-                    local remote = findRemote(tool)
-                    if remote and getShotsLoaded(tool) == 0 then pcall(function() remote:FireServer("Reload") end) end
-                end
-            end)
-        end
-    end
-end)
-
--- ========== 僵尸透视 ==========
+-- 僵尸透视（Highlight）
 local espHighlights = {}
-local function createZombieESP(model, espType)
-    if espHighlights[model] then return end
-    local config = {
-        Bomber = {color = Color3.fromRGB(255,180,60), label = "自爆僵尸"},
-        Cuirassier = {color = Color3.fromRGB(0,200,255), label = "胸甲骑兵"},
-        Runner = {color = Color3.fromRGB(255,0,0), label = "红眼"},
-        Zapper = {color = Color3.fromRGB(0,255,0), label = "斧头"},
-        Igniter = {color = Color3.fromRGB(255,255,0), label = "提灯人"},
-    }
-    local cfg = config[espType]
-    if not cfg then return end
-    local hl = Instance.new("Highlight")
-    hl.Adornee = model
-    hl.FillColor = cfg.color
-    hl.FillTransparency = CFG.ESP_CHAMS_TRANSPARENCY
-    hl.OutlineColor = Color3.new(1,1,1)
-    hl.OutlineTransparency = 0
-    hl.Parent = model
-    local billboard = nil
-    if CFG.ESP_SHOW_BILLBOARDS then
-        local torso = model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
-        if torso then
-            billboard = Instance.new("BillboardGui")
-            billboard.Adornee = torso
-            billboard.Size = UDim2.new(0, 100, 0, 40)
-            billboard.StudsOffset = Vector3.new(0, 3, 0)
-            billboard.AlwaysOnTop = true
-            local label = Instance.new("TextLabel", billboard)
-            label.Size = UDim2.new(1,0,1,0)
-            label.BackgroundTransparency = 1
-            label.Text = cfg.label
-            label.TextColor3 = cfg.color
-            label.TextScaled = true
-            label.Font = Enum.Font.GothamBold
-            billboard.Parent = model
-        end
-    end
-    espHighlights[model] = {hl = hl, bb = billboard}
-end
-
-local function updateZombieESP()
-    local zombies = Workspace:FindFirstChild("Zombies")
-    if not zombies then return end
-    local enabledTypes = {}
-    if CFG.ESP_BOMBER then enabledTypes.Bomber = true end
-    if CFG.ESP_CUIRASSIER then enabledTypes.Cuirassier = true end
-    if CFG.ESP_RUNNER then enabledTypes.Runner = true end
-    if CFG.ESP_ZAPPER then enabledTypes.Zapper = true end
-    if CFG.ESP_IGNITER then enabledTypes.Igniter = true end
-    local seen = {}
-    for _, model in ipairs(zombies:GetChildren()) do
-        if model:IsA("Model") then
-            local espType = nil
-            if enabledTypes.Bomber and model:FindFirstChild("Barrel") then espType = "Bomber"
-            elseif enabledTypes.Cuirassier and model:FindFirstChild("Sword") then espType = "Cuirassier"
-            elseif enabledTypes.Runner and model:FindFirstChild("Eye") and not model:FindFirstChild("Axe") then espType = "Runner"
-            elseif enabledTypes.Zapper and model:FindFirstChild("Axe") then espType = "Zapper"
-            elseif enabledTypes.Igniter and model:FindFirstChild("Whale Oil Lantern") then espType = "Igniter" end
-            if espType then
-                seen[model] = true
-                if not espHighlights[model] then createZombieESP(model, espType) end
-            end
-        end
-    end
-    for model, data in pairs(espHighlights) do
-        if not seen[model] then
-            if data.hl then data.hl:Destroy() end
-            if data.bb then data.bb:Destroy() end
-            espHighlights[model] = nil
-        end
-    end
-end
-
-spawn(function()
-    while true do
-        updateZombieESP()
-        wait(0.25)
-    end
-end)
-
--- ========== 玩家透视 ==========
-local playerESPData = {}
-local function updatePlayerESP()
-    if not (CFG.PLAYER_CHAMS or CFG.PLAYER_BILLBOARD) then
-        for _, data in pairs(playerESPData) do
-            if data.hl then data.hl:Destroy() end
-            if data.bb then data.bb:Destroy() end
-        end
-        table.clear(playerESPData)
+local function updateESP()
+    if not CFG.ESP then
+        for _, hl in pairs(espHighlights) do if hl then hl:Destroy() end end
+        table.clear(espHighlights)
         return
     end
-    local localChar = LocalPlayer.Character
-    local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-        local char = player.Character
-        if not char or not char.Parent then
-            if playerESPData[player] then
-                if playerESPData[player].hl then playerESPData[player].hl:Destroy() end
-                if playerESPData[player].bb then playerESPData[player].bb:Destroy() end
-                playerESPData[player] = nil
-            end
-            continue
+    local zombies = Workspace:FindFirstChild("Zombies")
+    if not zombies then return
+    for _, z in ipairs(zombies:GetChildren()) do
+        if z:IsA("Model") and not espHighlights[z] then
+            local hl = Instance.new("Highlight", z)
+            hl.FillColor = Color3.fromRGB(255, 100, 0)
+            hl.FillTransparency = 0.5
+            hl.OutlineColor = Color3.new(1,1,1)
+            espHighlights[z] = hl
         end
-        local head = char:FindFirstChild("Head")
-        if not head then continue end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum then continue end
-        local data = playerESPData[player]
-        if not data then
-            data = {}
-            if CFG.PLAYER_CHAMS then
-                data.hl = Instance.new("Highlight")
-                data.hl.Adornee = char
-                data.hl.FillColor = Color3.fromRGB(0,255,0)
-                data.hl.FillTransparency = 0.45
-                data.hl.OutlineColor = Color3.new(1,1,1)
-                data.hl.Parent = char
-            end
-            if CFG.PLAYER_BILLBOARD then
-                data.bb = Instance.new("BillboardGui")
-                data.bb.Adornee = head
-                data.bb.Size = UDim2.new(0, 120, 0, 60)
-                data.bb.StudsOffset = Vector3.new(0, 3, 0)
-                data.bb.AlwaysOnTop = true
-                local frame = Instance.new("Frame", data.bb)
-                frame.Size = UDim2.new(1,0,1,0)
-                frame.BackgroundColor3 = Color3.fromRGB(0,0,0)
-                frame.BackgroundTransparency = 0.6
-                local nameLbl = Instance.new("TextLabel", frame)
-                nameLbl.Size = UDim2.new(1,0,0.3,0)
-                nameLbl.BackgroundTransparency = 1
-                nameLbl.Text = player.Name
-                nameLbl.TextColor3 = Color3.new(1,1,1)
-                nameLbl.TextScaled = true
-                local healthLbl = Instance.new("TextLabel", frame)
-                healthLbl.Size = UDim2.new(1,0,0.3,0)
-                healthLbl.Position = UDim2.new(0,0,0.3,0)
-                healthLbl.BackgroundTransparency = 1
-                healthLbl.Text = "生命值: " .. math.floor(hum.Health) .. "/" .. hum.MaxHealth
-                healthLbl.TextColor3 = Color3.fromRGB(0,255,0)
-                healthLbl.TextScaled = true
-                data.labels = {health = healthLbl}
-                if CFG.SHOW_INFECTED then
-                    local infLbl = Instance.new("TextLabel", frame)
-                    infLbl.Size = UDim2.new(1,0,0.3,0)
-                    infLbl.Position = UDim2.new(0,0,0.6,0)
-                    infLbl.BackgroundTransparency = 1
-                    infLbl.Text = "感染: 0/100"
-                    infLbl.TextColor3 = Color3.fromRGB(255,255,0)
-                    infLbl.TextScaled = true
-                    data.labels.inf = infLbl
-                end
-                data.bb.Parent = char
-            end
-            playerESPData[player] = data
-        end
-        if CFG.PLAYER_CHAMS and data.hl then
-            local percent = hum.Health / hum.MaxHealth
-            local r = math.floor(255 * (1 - percent))
-            local g = math.floor(255 * percent)
-            data.hl.FillColor = Color3.fromRGB(r, g, 0)
-        end
-        if CFG.PLAYER_BILLBOARD and data.labels and data.labels.health then
-            data.labels.health.Text = "生命值: " .. math.floor(hum.Health) .. "/" .. hum.MaxHealth
-            local percent = hum.Health / hum.MaxHealth
-            data.labels.health.TextColor3 = Color3.fromRGB(255 * (1 - percent), 255 * percent, 0)
-            if localRoot and head then
-                local dist = (localRoot.Position - head.Position).Magnitude
-                data.bb.Enabled = dist <= 150
-            end
-            -- 感染值（从workspace中获取）
-            local wsPlayers = Workspace:FindFirstChild("Players")
-            if wsPlayers and CFG.SHOW_INFECTED and data.labels.inf then
-                local pf = wsPlayers:FindFirstChild(player.Name)
-                if pf then
-                    local us = pf:FindFirstChild("UserStates")
-                    if us then
-                        local infected = us:FindFirstChild("Infected")
-                        if infected then
-                            data.labels.inf.Text = "感染: " .. infected.Value .. "/100"
-                        end
-                    end
-                end
-            end
-        end
+    end
+    for z, hl in pairs(espHighlights) do
+        if not z.Parent then hl:Destroy(); espHighlights[z] = nil end
     end
 end
 spawn(function()
     while true do
-        updatePlayerESP()
-        wait(0.2)
-    end
-end)
-
--- 低生命通知和被抓/压制通知
-local lowHealthNotified = {}
-local grabbedNotified = {}
-spawn(function()
-    while true do
-        if CFG.NOTIFY_LOW_HEALTH or CFG.NOTIFY_GRABBED_PINNED then
-            for _, player in ipairs(Players:GetPlayers()) do
-                if player == LocalPlayer then continue end
-                local char = player.Character
-                if not char then continue end
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if not hum then continue end
-                if CFG.NOTIFY_LOW_HEALTH then
-                    local percent = hum.Health / hum.MaxHealth
-                    if percent < 0.25 and not lowHealthNotified[player] then
-                        lowHealthNotified[player] = true
-                        pcall(function() print("[通知] " .. player.Name .. " 正在濒死!") end)
-                    elseif percent >= 0.25 then lowHealthNotified[player] = false end
-                end
-                if CFG.NOTIFY_GRABBED_PINNED then
-                    local wsPlayers = Workspace:FindFirstChild("Players")
-                    if wsPlayers then
-                        local pf = wsPlayers:FindFirstChild(player.Name)
-                        if pf then
-                            local us = pf:FindFirstChild("UserStates")
-                            if us then
-                                local grabbed = us:FindFirstChild("Grabbed") and us.Grabbed.Value ~= 0
-                                local pin = us:FindFirstChild("Pin") and us.Pin.Value ~= ""
-                                if (grabbed or pin) and not grabbedNotified[player] then
-                                    grabbedNotified[player] = true
-                                    pcall(function() print("[通知] " .. player.Name .. " 正被抓或压制!") end)
-                                elseif not (grabbed or pin) then grabbedNotified[player] = false end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        wait(0.5)
-    end
-end)
-
--- ========== 职业功能 ==========
--- 医疗兵自动请求治疗
-spawn(function()
-    while true do
-        if CFG.AUTO_REQUEST_HEAL then
-            for _, player in ipairs(Players:GetPlayers()) do
-                if player == LocalPlayer then continue end
-                local char = player.Character
-                if not char then continue end
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health <= hum.MaxHealth * (CFG.HEAL_THRESHOLD / 100) then
-                    local localChar = LocalPlayer.Character
-                    if localChar then
-                        local med = localChar:FindFirstChild("Medical Supplies")
-                        if med and med:FindFirstChild("RemoteEvent") then
-                            pcall(function() med.RemoteEvent:FireServer("SendRequest", hum) end)
-                        end
-                    end
-                end
-            end
-        end
+        updateESP()
         wait(0.25)
     end
 end)
 
--- 工兵自动修复
-spawn(function()
-    while true do
-        if CFG.AUTO_REPAIR then
-            local char = LocalPlayer.Character
-            if char then
-                local hammer = char:FindFirstChild("Hammer")
-                if hammer and hammer:FindFirstChild("RemoteEvent") then
-                    local cam = Camera
-                    local origin = cam.CFrame.Position
-                    local dir = cam.CFrame.LookVector * 50
-                    local params = RaycastParams.new()
-                    params.FilterDescendantsInstances = {char}
-                    params.FilterType = Enum.RaycastFilterType.Blacklist
-                    local hit = Workspace:Raycast(origin, dir, params)
-                    if hit then
-                        local model = hit.Instance:FindFirstAncestorOfClass("Model")
-                        if model then
-                            local buildHealth = model:FindFirstChild("BuildingHealth") or (model.Parent and model.Parent:FindFirstChild("BuildingHealth"))
-                            if buildHealth and buildHealth.Value < (buildHealth:GetAttribute("MaxHealth") or 0) then
-                                pcall(function() hammer.RemoteEvent:FireServer("Repair", buildHealth) end)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        wait(0.1)
-    end
-end)
-
--- 牧师自动祝福
-spawn(function()
-    while true do
-        if CFG.AUTO_BLESS then
-            for _, player in ipairs(Players:GetPlayers()) do
-                if player == LocalPlayer then continue end
-                local wsPlayers = Workspace:FindFirstChild("Players")
-                if wsPlayers then
-                    local pf = wsPlayers:FindFirstChild(player.Name)
-                    if pf then
-                        local us = pf:FindFirstChild("UserStates")
-                        if us then
-                            local infected = us:FindFirstChild("Infected")
-                            if infected and infected.Value >= CFG.BLESS_THRESHOLD then
-                                local char = LocalPlayer.Character
-                                if char then
-                                    local blessing = char:FindFirstChild("Blessing")
-                                    if blessing and blessing:FindFirstChild("RemoteEvent") then
-                                        local targetHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-                                        if targetHum then
-                                            pcall(function() blessing.RemoteEvent:FireServer("SendRequest", targetHum) end)
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        wait(0.5)
-    end
-end)
-
--- ========== 地图自动化 ==========
-spawn(function()
-    while true do
-        if CFG.AUTO_BELL then
-            local leipzig = workspace:FindFirstChild("Leipzig")
-            if leipzig and leipzig:FindFirstChild("Modes") then
-                local modes = leipzig.Modes
-                if modes:FindFirstChild("Objective") then
-                    local objective = modes.Objective
-                    if objective:FindFirstChild("BellInteract") then
-                        local bell = objective.BellInteract
-                        if bell:FindFirstChild("Interact") then
-                            pcall(function() bell.Interact:FireServer() end)
-                        end
-                    end
-                end
-            end
-        end
-        if CFG.AUTO_BUCKET then
-            local char = LocalPlayer.Character
-            if char then
-                local bucket = char:FindFirstChild("Water Bucket") or LocalPlayer.Backpack:FindFirstChild("Water Bucket")
-                if bucket then
-                    if bucket.Parent ~= char then bucket.Parent = char; wait(0.1) end
-                    if bucket:FindFirstChild("RemoteEvent") then
-                        pcall(function() bucket.RemoteEvent:FireServer("Throw") end)
-                        spawn(function()
-                            wait(0.2)
-                            if bucket and bucket.Parent == char then bucket.Parent = LocalPlayer.Backpack end
-                        end)
-                    end
-                end
-            end
-        end
-        if CFG.AUTO_REPAIR_BRIDGE then
-            local char = LocalPlayer.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                local root = char.HumanoidRootPart
-                local bridge = workspace:FindFirstChild("Berezina")
-                if bridge then
-                    bridge = bridge:FindFirstChild("Modes")
-                    if bridge then bridge = bridge:FindFirstChild("Holdout")
-                    if bridge then bridge = bridge:FindFirstChild("Bridge") end end end
-                if bridge then
-                    local nearest, nearestDist = nil, math.huge
-                    for _, section in ipairs(bridge:GetChildren()) do
-                        local posts = section:FindFirstChild("Posts")
-                        if posts then
-                            for _, part in ipairs(posts:GetChildren()) do
-                                if part:IsA("BasePart") and part:FindFirstChild("ConstructHealth") then
-                                    local d = (part.Position - root.Position).Magnitude
-                                    if d < nearestDist then nearestDist = d; nearest = part.ConstructHealth end
-                                end
-                            end
-                        end
-                        local beam = section:FindFirstChild("Beam")
-                        if beam and beam:FindFirstChild("ConstructHealth") then
-                            local d = (beam.Position - root.Position).Magnitude
-                            if d < nearestDist then nearestDist = d; nearest = beam.ConstructHealth end
-                        end
-                        for _, joists in ipairs(section:GetChildren()) do
-                            if joists.Name == "Joists" and joists:FindFirstChild("ConstructHealth") then
-                                local d = (joists.Position - root.Position).Magnitude
-                                if d < nearestDist then nearestDist = d; nearest = joists.ConstructHealth end
-                            end
-                        end
-                    end
-                    if nearest and nearestDist < 20 then
-                        local hammer = LocalPlayer.Backpack:FindFirstChild("Hammer") or LocalPlayer.Backpack:FindFirstChild("Claw Hammer")
-                        if hammer and hammer:FindFirstChild("RemoteEvent") then
-                            if hammer.Parent ~= char then hammer.Parent = char; wait(0.2) end
-                            pcall(function() hammer.RemoteEvent:FireServer("Repair", nearest) end)
-                        end
-                    end
-                end
-            end
-        end
-        if CFG.AUTO_GET_LOGS then
-            local waitTime = math.max(50, 1010 - CFG.AUTO_SPEED) / 1000
-            local remoteEvent = workspace:FindFirstChild("Berezina")
-            if remoteEvent then
-                remoteEvent = remoteEvent:FindFirstChild("Modes")
-                if remoteEvent then remoteEvent = remoteEvent:FindFirstChild("Holdout")
-                if remoteEvent then remoteEvent = remoteEvent:FindFirstChild("Log")
-                if remoteEvent then remoteEvent = remoteEvent:FindFirstChild("Log")
-                if remoteEvent then remoteEvent = remoteEvent:FindFirstChild("Interact")
-                if remoteEvent and remoteEvent:IsA("RemoteEvent") then pcall(function() remoteEvent:FireServer() end) end end end end end
-            wait(waitTime)
-        end
-        if CFG.AUTO_PLACE_LOGS then
-            local waitTime = math.max(50, 1010 - CFG.AUTO_SPEED) / 1000
-            for _, prompt in pairs(workspace:GetDescendants()) do
-                if prompt:IsA("ProximityPrompt") and prompt.Name == "PlaceLogProximityPrompt" then
-                    pcall(function() fireproximityprompt(prompt) end)
-                    wait(0.05)
-                end
-            end
-            wait(waitTime)
-        end
-        wait(0.2)
-    end
-end)
-
--- ========== 其他功能 ==========
--- 全亮/无雾
-local fullbrightConn, noFogConn = nil, nil
-local origLighting = {Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime, FogEnd = Lighting.FogEnd, FogStart = Lighting.FogStart}
+-- 全图高亮
+local origBrightness = Lighting.Brightness
+local origClockTime = Lighting.ClockTime
+local fullbrightConn = nil
 local function updateFullbright()
     if CFG.FULLBRIGHT then
         if not fullbrightConn then
             fullbrightConn = RunService.Heartbeat:Connect(function()
                 Lighting.Brightness = 2
                 Lighting.ClockTime = 14
-                Lighting.FogEnd = 1e6
-                Lighting.FogStart = 0
                 Lighting.GlobalShadows = false
-                Lighting.OutdoorAmbient = Color3.fromRGB(128,128,128)
-                Lighting.Ambient = Color3.fromRGB(128,128,128)
             end)
         end
     else
         if fullbrightConn then fullbrightConn:Disconnect(); fullbrightConn = nil end
-        Lighting.Brightness = origLighting.Brightness
-        Lighting.ClockTime = origLighting.ClockTime
-        Lighting.FogEnd = origLighting.FogEnd
-        Lighting.FogStart = origLighting.FogStart
-    end
-end
-local function updateNoFog()
-    if CFG.NO_FOG then
-        if not noFogConn then
-            noFogConn = RunService.Heartbeat:Connect(function()
-                Lighting.FogEnd = 1e6
-                Lighting.FogStart = 0
-            end)
-        end
-    else
-        if noFogConn then noFogConn:Disconnect(); noFogConn = nil end
-        Lighting.FogEnd = origLighting.FogEnd
-        Lighting.FogStart = origLighting.FogStart
+        Lighting.Brightness = origBrightness
+        Lighting.ClockTime = origClockTime
+        Lighting.GlobalShadows = true
     end
 end
 
--- 命中框扩展
-local hitboxExpanderConn = nil
-local function updateHitboxExpander()
-    if CFG.HITBOX_EXPANDER then
-        if hitboxExpanderConn then hitboxExpanderConn:Disconnect() end
-        hitboxExpanderConn = RunService.Heartbeat:Connect(function()
-            local zombies = Workspace:FindFirstChild("Zombies")
-            if not zombies then return end
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
-            for _, z in ipairs(zombies:GetChildren()) do
-                if z:IsA("Model") and z:FindFirstChild("HumanoidRootPart") then
-                    local dist = (hrp.Position - z.HumanoidRootPart.Position).Magnitude
-                    if dist <= CFG.HITBOX_RANGE then
-                        local head = z:FindFirstChild("Head")
-                        local hrpz = z:FindFirstChild("HumanoidRootPart")
-                        if head and not z:FindFirstChild("HeadHitbox") then
-                            local hb = Instance.new("Part")
-                            hb.Name = "HeadHitbox"
-                            hb.Size = Vector3.new(CFG.HITBOX_SIZE/2, CFG.HITBOX_SIZE/2, CFG.HITBOX_SIZE/2)
-                            hb.Transparency = 1
-                            hb.CanCollide = false
-                            hb.Parent = z
-                            local weld = Instance.new("WeldConstraint", hb)
-                            weld.Part0 = head
-                            weld.Part1 = hb
-                        end
-                        if hrpz and not z:FindFirstChild("OuterHitbox") then
-                            local ob = Instance.new("Part")
-                            ob.Name = "OuterHitbox"
-                            ob.Size = Vector3.new(CFG.HITBOX_SIZE, CFG.HITBOX_SIZE, CFG.HITBOX_SIZE)
-                            ob.Transparency = 1
-                            ob.CanCollide = false
-                            ob.Parent = z
-                            local weld = Instance.new("WeldConstraint", ob)
-                            weld.Part0 = hrpz
-                            weld.Part1 = ob
-                        end
-                    else
-                        if z:FindFirstChild("HeadHitbox") then z.HeadHitbox:Destroy() end
-                        if z:FindFirstChild("OuterHitbox") then z.OuterHitbox:Destroy() end
-                    end
-                end
-            end
-        end)
-    else
-        if hitboxExpanderConn then hitboxExpanderConn:Disconnect(); hitboxExpanderConn = nil end
-        local zombies = Workspace:FindFirstChild("Zombies")
-        if zombies then
-            for _, z in ipairs(zombies:GetChildren()) do
-                if z:FindFirstChild("HeadHitbox") then z.HeadHitbox:Destroy() end
-                if z:FindFirstChild("OuterHitbox") then z.OuterHitbox:Destroy() end
-            end
-        end
-    end
-end
-
--- 保持物品栏开启
-local keepBackpackConn = nil
-local function setupKeepBackpack()
-    if CFG.KEEP_BACKPACK then
-        local backpackGui = PlayerGui:FindFirstChild("BackpackGui")
-        if backpackGui then
-            backpackGui.Enabled = true
-            if not keepBackpackConn then
-                keepBackpackConn = backpackGui:GetPropertyChangedSignal("Enabled"):Connect(function()
-                    if CFG.KEEP_BACKPACK and backpackGui.Enabled == false then backpackGui.Enabled = true end
-                end)
-            end
-        end
-    else
-        if keepBackpackConn then keepBackpackConn:Disconnect(); keepBackpackConn = nil end
-    end
-end
-
--- 无减速效果
-local noSlowConn = nil
-local function setupNoSlow()
-    if CFG.NO_SLOW then
-        if not noSlowConn then
-            noSlowConn = LocalPlayer.CharacterAdded:Connect(function()
-                wait(1)
-                local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if hum then
-                    hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-                        if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
-                    end)
-                    if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
-                end
-            end)
-        end
-    else
-        if noSlowConn then noSlowConn:Disconnect(); noSlowConn = nil end
-    end
-end
-
--- 自救
-local selfRescueConn = nil
-local function setupSelfRescue()
-    if CFG.SELF_RESCUE then
-        if not selfRescueConn then
-            selfRescueConn = RunService.Heartbeat:Connect(function()
-                local char = LocalPlayer.Character
-                if not char then return end
-                local weapon = nil
-                for _, child in pairs(char:GetChildren()) do
-                    if child:GetAttribute("Melee") then weapon = child; break end
-                end
-                if not weapon then
-                    for _, child in pairs(LocalPlayer.Backpack:GetChildren()) do
-                        if child:GetAttribute("Melee") then weapon = child; break end
-                    end
-                end
-                if weapon then
-                    local zombies = Workspace:FindFirstChild("Zombies")
-                    if zombies then
-                        for _, z in ipairs(zombies:GetChildren()) do
-                            if z:IsA("Model") and z:FindFirstChild("HumanoidRootPart") then
-                                local dist = (char.HumanoidRootPart.Position - z.HumanoidRootPart.Position).Magnitude
-                                if dist <= 5 then
-                                    if weapon.Parent ~= char then weapon.Parent = char; wait(0.1) end
-                                    char.HumanoidRootPart.CFrame = CFrame.lookAt(char.HumanoidRootPart.Position, Vector3.new(z.HumanoidRootPart.Position.X, char.HumanoidRootPart.Position.Y, z.HumanoidRootPart.Position.Z))
-                                    local remote = char:FindFirstChild(weapon.Name) and char[weapon.Name]:FindFirstChild("RemoteEvent")
-                                    if remote then
-                                        pcall(function() remote:FireServer("Swing", "Side") end)
-                                        local head = z:FindFirstChild("Head")
-                                        if head then pcall(function() remote:FireServer("HitZombie", z, head.Position, true) end) end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end)
-        end
-    else
-        if selfRescueConn then selfRescueConn:Disconnect(); selfRescueConn = nil end
-    end
-end
-
--- 自动跳跃（刺击时跳跃，通过监听动画）
-local autoJumpAnimator = nil
-local autoJumpMonitoring = false
-local autoJumpPlayedTracks = {}
-local TARGET_ANIM_IDS = {
-    "rbxassetid://17406577733",
-    "rbxassetid://15669224658",
-    "rbxassetid://12591948314",
-    "rbxassetid://12333491302",
-}
-local function normalizeAnimId(id)
-    local s = tostring(id)
-    if s:match("^%d+$") then return "rbxassetid://" .. s end
-    return s
-end
-local TARGETS = {}
-for _, v in ipairs(TARGET_ANIM_IDS) do TARGETS[normalizeAnimId(v)] = true end
-local function trackIsTarget(track)
-    if not track or not track.IsPlaying then return false end
-    local anim = track.Animation
-    if not anim or not anim.AnimationId then return false end
-    return TARGETS[normalizeAnimId(anim.AnimationId)]
-end
-local function doAutoJump()
-    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    spawn(function()
-        local root = hum.RootPart or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"))
-        if root then
-            root.Velocity = Vector3.new(root.Velocity.X, 30, root.Velocity.Z)
+-- 移动速度
+local walkConn = nil
+local function updateWalkSpeed()
+    if walkConn then walkConn:Disconnect() end
+    walkConn = RunService.Heartbeat:Connect(function()
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = CFG.LOOP_SPEED end
         end
     end)
 end
-local function startAutoJumpMonitoring()
-    if autoJumpMonitoring then return end
-    autoJumpMonitoring = true
-    spawn(function()
-        while autoJumpMonitoring do
-            if autoJumpAnimator then
-                local ok, tracks = pcall(function() return autoJumpAnimator:GetPlayingAnimationTracks() end)
-                if ok and tracks then
-                    for _, track in ipairs(tracks) do
-                        if trackIsTarget(track) and not autoJumpPlayedTracks[track] then
-                            autoJumpPlayedTracks[track] = true
-                            pcall(doAutoJump)
-                            track.Stopped:Connect(function() autoJumpPlayedTracks[track] = nil end)
-                        end
-                    end
-                end
-            end
-            wait(0.08)
-        end
-    end)
-end
-local function stopAutoJumpMonitoring()
-    autoJumpMonitoring = false
-    autoJumpPlayedTracks = {}
-end
-local function refreshAutoJumpAnimator()
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            autoJumpAnimator = hum:FindFirstChildOfClass("Animator") or Instance.new("Animator", hum)
-        end
-    end
-end
-refreshAutoJumpAnimator()
-LocalPlayer.CharacterAdded:Connect(function() wait(0.5); refreshAutoJumpAnimator() end)
+updateWalkSpeed()
 
--- ========== SDGT ELIT UI 框架 ==========
+-- ========== SDGT ELIT UI ==========
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SDGT_Elite_Gui"
 ScreenGui.ResetOnSpawn = false
@@ -1409,7 +608,6 @@ local function toggleSubUI(name)
     else table.insert(ActiveSubUIs, target) if MainFrame.Visible then target.Visible = true end end
 end
 
--- 创建子窗口
 local function createSubWindow(name, items)
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
@@ -1418,81 +616,10 @@ local function createSubWindow(name, items)
     subScroll.Size, subScroll.Position, subScroll.BackgroundTransparency, subScroll.ScrollBarThickness, subScroll.Parent = UDim2.new(1, 0, 1, -BAR_HEIGHT), UDim2.new(0, 0, 0, BAR_HEIGHT), 1, 0, sub
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
 
-    if name == "主要功能" then
-        createFeatureButton(subScroll, "飞行开关", false, function(s) CFG.FLY_ENABLED = s; if s then startFly() else stopFly() end end)
-        local speedBtn = createFeatureButton(subScroll, "飞行速度", false, function() end, true)
-        speedBtn.Text = "飞行速度: " .. CFG.FLY_SPEED
-        speedBtn.MouseButton1Click:Connect(function()
-            local newS = CFG.FLY_SPEED + 5
-            if newS > 100 then newS = 10 end
-            CFG.FLY_SPEED = newS
-            speedBtn.Text = "飞行速度: " .. CFG.FLY_SPEED
-        end)
-        local walkSpeedBtn = createFeatureButton(subScroll, "移动速度", false, function() end, true)
-        walkSpeedBtn.Text = "移动速度: " .. CFG.WALK_SPEED
-        walkSpeedBtn.MouseButton1Click:Connect(function()
-            local newS = CFG.WALK_SPEED + 1
-            if newS > 45 then newS = 16 end
-            CFG.WALK_SPEED = newS
-            walkSpeedBtn.Text = "移动速度: " .. CFG.WALK_SPEED
-            if CFG.WALK_SPEED_ENABLED then
-                local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if hum then hum.WalkSpeed = CFG.WALK_SPEED end
-            end
-        end)
-        createFeatureButton(subScroll, "应用移动速度", false, function(s) CFG.WALK_SPEED_ENABLED = s; setupWalkSpeed() end)
-        createFeatureButton(subScroll, "自动射击炸弹僵尸", false, function(s) CFG.AUTO_SHOOT_BOMBER = s end)
-        createFeatureButton(subScroll, "自动射击胸甲骑兵", false, function(s) CFG.AUTO_SHOOT_CAVALRY = s end)
-        createFeatureButton(subScroll, "自动射击奔跑者", false, function(s) CFG.AUTO_SHOOT_RUNNER = s end)
-        createFeatureButton(subScroll, "自动射击斧头者", false, function(s) CFG.AUTO_SHOOT_ELECTROCUTIONER = s end)
-        createFeatureButton(subScroll, "自动射击点燃者", false, function(s) CFG.AUTO_SHOOT_IGNITER = s end)
-        local rangeBtn = createFeatureButton(subScroll, "最大目标范围", false, function() end, true)
-        rangeBtn.Text = "最大范围: " .. CFG.AUTO_SHOOT_MAX_RANGE
-        rangeBtn.MouseButton1Click:Connect(function()
-            local newR = CFG.AUTO_SHOOT_MAX_RANGE + 10
-            if newR > 600 then newR = 50 end
-            CFG.AUTO_SHOOT_MAX_RANGE = newR
-            rangeBtn.Text = "最大范围: " .. CFG.AUTO_SHOOT_MAX_RANGE
-        end)
-        createFeatureButton(subScroll, "墙壁检查", false, function(s) CFG.AUTO_SHOOT_WALL_CHECK = s end)
-        createFeatureButton(subScroll, "自动装填", false, function(s) CFG.AUTO_RELOAD = s end)
-        -- 获取物品（需要知道具体Remote路径，这里简化）
-        createFeatureButton(subScroll, "Voivode", false, function()
-            local h = ReplicatedStorage:FindFirstChild("Events"):FindFirstChild("Customize"):FindFirstChild("PurchaseEvent")
-            if h then h:FireServer("Voivode") end
-        end, true)
-        createFeatureButton(subScroll, "Iron Stake", false, function()
-            local h = ReplicatedStorage:FindFirstChild("Events"):FindFirstChild("Customize"):FindFirstChild("PurchaseEvent")
-            if h then h:FireServer("Iron Stake") end
-        end, true)
-    end
-
-    if name == "透视功能" then
-        createFeatureButton(subScroll, "自爆透视", false, function(s) CFG.ESP_BOMBER = s end)
-        createFeatureButton(subScroll, "胸甲骑兵透视", false, function(s) CFG.ESP_CUIRASSIER = s end)
-        createFeatureButton(subScroll, "红眼透视", false, function(s) CFG.ESP_RUNNER = s end)
-        createFeatureButton(subScroll, "斧头透视", false, function(s) CFG.ESP_ZAPPER = s end)
-        createFeatureButton(subScroll, "提灯人透视", false, function(s) CFG.ESP_IGNITER = s end)
-        createFeatureButton(subScroll, "显示标签", false, function(s) CFG.ESP_SHOW_BILLBOARDS = s end)
-        local transpBtn = createFeatureButton(subScroll, "透视透明度", false, function() end, true)
-        transpBtn.Text = "透明度: " .. CFG.ESP_CHAMS_TRANSPARENCY
-        transpBtn.MouseButton1Click:Connect(function()
-            local newT = CFG.ESP_CHAMS_TRANSPARENCY + 0.1
-            if newT > 1 then newT = 0 end
-            CFG.ESP_CHAMS_TRANSPARENCY = newT
-            transpBtn.Text = "透明度: " .. string.format("%.1f", CFG.ESP_CHAMS_TRANSPARENCY)
-            for _, data in pairs(espHighlights) do if data.hl then data.hl.FillTransparency = CFG.ESP_CHAMS_TRANSPARENCY end end
-        end)
-        createFeatureButton(subScroll, "玩家透视(Chams)", false, function(s) CFG.PLAYER_CHAMS = s end)
-        createFeatureButton(subScroll, "玩家标签透视", false, function(s) CFG.PLAYER_BILLBOARD = s end)
-        createFeatureButton(subScroll, "低生命值玩家通知", false, function(s) CFG.NOTIFY_LOW_HEALTH = s end)
-        createFeatureButton(subScroll, "显示感染玩家", false, function(s) CFG.SHOW_INFECTED = s end)
-        createFeatureButton(subScroll, "被抓与被压制玩家通知", false, function(s) CFG.NOTIFY_GRABBED_PINNED = s end)
-    end
-
-    if name == "杀戮功能" then
-        createFeatureButton(subScroll, "杀戮光环", false, function(s) CFG.KILLAURA_ENABLED = s end)
-        local rangeBtn = createFeatureButton(subScroll, "杀戮光环范围", false, function() end, true)
+    if name == "战斗" then
+        createFeatureButton(subScroll, "核心杀戮", false, function(s) CFG.KILLAURA = s end)
+        createFeatureButton(subScroll, "自动面向", false, function(s) CFG.AUTO_FACE = s end)
+        local rangeBtn = createFeatureButton(subScroll, "杀戮范围", false, function() end, true)
         rangeBtn.Text = "范围: " .. CFG.KILLAURA_RANGE
         rangeBtn.MouseButton1Click:Connect(function()
             local newR = CFG.KILLAURA_RANGE + 1
@@ -1500,127 +627,26 @@ local function createSubWindow(name, items)
             CFG.KILLAURA_RANGE = newR
             rangeBtn.Text = "范围: " .. CFG.KILLAURA_RANGE
         end)
-        local speedBtn = createFeatureButton(subScroll, "攻击速度", false, function() end, true)
-        speedBtn.Text = "攻击速度: " .. CFG.KILLAURA_SPAM_COUNT
+    end
+    if name == "移动" then
+        createFeatureButton(subScroll, "飞行绕过", false, function(s) if s then createFlyUI() end end)
+        local speedBtn = createFeatureButton(subScroll, "移速", false, function() end, true)
+        speedBtn.Text = "移速: " .. CFG.LOOP_SPEED
         speedBtn.MouseButton1Click:Connect(function()
-            local newS = CFG.KILLAURA_SPAM_COUNT + 1
-            if newS > 5 then newS = 1 end
-            CFG.KILLAURA_SPAM_COUNT = newS
-            speedBtn.Text = "攻击速度: " .. CFG.KILLAURA_SPAM_COUNT
-        end)
-        local multiBtn = createFeatureButton(subScroll, "多目标", false, function() end, true)
-        multiBtn.Text = "多目标: " .. CFG.KILLAURA_MULTI_TARGET
-        multiBtn.MouseButton1Click:Connect(function()
-            local newM = CFG.KILLAURA_MULTI_TARGET + 1
-            if newM > 10 then newM = 1 end
-            CFG.KILLAURA_MULTI_TARGET = newM
-            multiBtn.Text = "多目标: " .. CFG.KILLAURA_MULTI_TARGET
-        end)
-        createFeatureButton(subScroll, "目标透视", false, function(s) CFG.KILLAURA_TARGET_ESP = s end)
-        createFeatureButton(subScroll, "启用视野", false, function(s) CFG.KILLAURA_FOV_ENABLED = s end)
-        local fovSizeBtn = createFeatureButton(subScroll, "视野大小", false, function() end, true)
-        fovSizeBtn.Text = "视野大小: " .. CFG.KILLAURA_FOV_SIZE
-        fovSizeBtn.MouseButton1Click:Connect(function()
-            local newF = CFG.KILLAURA_FOV_SIZE + 10
-            if newF > 180 then newF = 10 end
-            CFG.KILLAURA_FOV_SIZE = newF
-            fovSizeBtn.Text = "视野大小: " .. CFG.KILLAURA_FOV_SIZE
-        end)
-        createFeatureButton(subScroll, "自动注视", false, function(s) CFG.KILLAURA_AUTO_LOOK = s end)
-        createFeatureButton(subScroll, "刺刀杀戮光环", false, function(s) CFG.BAYONET_KILLAURA = s end)
-        createFeatureButton(subScroll, "攻击炸药桶", false, function(s) CFG.BAYONET_ATTACK_BARRELS = s end)
-        createFeatureButton(subScroll, "自动转向", false, function(s) CFG.BAYONET_AUTO_ROTATE = s end)
-        createFeatureButton(subScroll, "肘击", false, function(s) CFG.ELBOW_STRIKE = s end)
-        createFeatureButton(subScroll, "卡宾枪肘击", false, function(s) CFG.CARBINE_STUN = s end)
-        local stunBtn = createFeatureButton(subScroll, "目标数量", false, function() end, true)
-        stunBtn.Text = "目标数量: " .. CFG.STUN_TARGETS
-        stunBtn.MouseButton1Click:Connect(function()
-            local newT = CFG.STUN_TARGETS + 1
-            if newT > 10 then newT = 1 end
-            CFG.STUN_TARGETS = newT
-            stunBtn.Text = "目标数量: " .. CFG.STUN_TARGETS
+            local newS = CFG.LOOP_SPEED + 1
+            if newS > 45 then newS = 16 end
+            CFG.LOOP_SPEED = newS
+            speedBtn.Text = "移速: " .. CFG.LOOP_SPEED
+            updateWalkSpeed()
         end)
     end
-
-    if name == "玩家功能" then
-        createFeatureButton(subScroll, "保持物品栏开启", false, function(s) CFG.KEEP_BACKPACK = s; setupKeepBackpack() end)
-        createFeatureButton(subScroll, "无减速效果", false, function(s) CFG.NO_SLOW = s; setupNoSlow() end)
-        createFeatureButton(subScroll, "自救", false, function(s) CFG.SELF_RESCUE = s; setupSelfRescue() end)
-        createFeatureButton(subScroll, "自动跳跃", false, function(s) CFG.AUTO_JUMP = s; if s then startAutoJumpMonitoring() else stopAutoJumpMonitoring() end end)
+    if name == "玩家" then
+        createFeatureButton(subScroll, "半无敌", false, function(s) CFG.HALF_WUDI = s end)
     end
-
-    if name == "职业功能" then
-        createFeatureButton(subScroll, "自动请求治疗濒死玩家", false, function(s) CFG.AUTO_REQUEST_HEAL = s end)
-        local healBtn = createFeatureButton(subScroll, "治疗阈值", false, function() end, true)
-        healBtn.Text = "治疗阈值: " .. CFG.HEAL_THRESHOLD .. "%"
-        healBtn.MouseButton1Click:Connect(function()
-            local newT = CFG.HEAL_THRESHOLD + 5
-            if newT > 100 then newT = 1 end
-            CFG.HEAL_THRESHOLD = newT
-            healBtn.Text = "治疗阈值: " .. CFG.HEAL_THRESHOLD .. "%"
-        end)
-        createFeatureButton(subScroll, "自动修复", false, function(s) CFG.AUTO_REPAIR = s end)
-        createFeatureButton(subScroll, "自动祝福感染玩家", false, function(s) CFG.AUTO_BLESS = s end)
-        local blessBtn = createFeatureButton(subScroll, "感染阈值", false, function() end, true)
-        blessBtn.Text = "感染阈值: " .. CFG.BLESS_THRESHOLD
-        blessBtn.MouseButton1Click:Connect(function()
-            local newT = CFG.BLESS_THRESHOLD + 10
-            if newT > 200 then newT = 0 end
-            CFG.BLESS_THRESHOLD = newT
-            blessBtn.Text = "感染阈值: " .. CFG.BLESS_THRESHOLD
-        end)
+    if name == "视觉效果" then
+        createFeatureButton(subScroll, "僵尸透视", false, function(s) CFG.ESP = s end)
+        createFeatureButton(subScroll, "全图高亮", false, function(s) CFG.FULLBRIGHT = s; updateFullbright() end)
     end
-
-    if name == "其他功能" then
-        createFeatureButton(subScroll, "自动敲钟", false, function(s) CFG.AUTO_BELL = s end)
-        createFeatureButton(subScroll, "自动水桶灭火", false, function(s) CFG.AUTO_BUCKET = s end)
-        createFeatureButton(subScroll, "自动修桥", false, function(s) CFG.AUTO_REPAIR_BRIDGE = s end)
-        createFeatureButton(subScroll, "自动拿木头", false, function(s) CFG.AUTO_GET_LOGS = s end)
-        createFeatureButton(subScroll, "自动放木头", false, function(s) CFG.AUTO_PLACE_LOGS = s end)
-        local autoSpeedBtn = createFeatureButton(subScroll, "自动化速度", false, function() end, true)
-        autoSpeedBtn.Text = "速度: " .. CFG.AUTO_SPEED .. " ms"
-        autoSpeedBtn.MouseButton1Click:Connect(function()
-            local newS = CFG.AUTO_SPEED + 50
-            if newS > 1000 then newS = 10 end
-            CFG.AUTO_SPEED = newS
-            autoSpeedBtn.Text = "速度: " .. CFG.AUTO_SPEED .. " ms"
-        end)
-        createFeatureButton(subScroll, "全亮", false, function(s) CFG.FULLBRIGHT = s; updateFullbright() end)
-        createFeatureButton(subScroll, "无雾", false, function(s) CFG.NO_FOG = s; updateNoFog() end)
-        createFeatureButton(subScroll, "命中框扩展", false, function(s) CFG.HITBOX_EXPANDER = s; updateHitboxExpander() end)
-        local hitboxSizeBtn = createFeatureButton(subScroll, "命中框大小", false, function() end, true)
-        hitboxSizeBtn.Text = "大小: " .. CFG.HITBOX_SIZE
-        hitboxSizeBtn.MouseButton1Click:Connect(function()
-            local newS = CFG.HITBOX_SIZE + 1
-            if newS > 30 then newS = 1 end
-            CFG.HITBOX_SIZE = newS
-            hitboxSizeBtn.Text = "大小: " .. CFG.HITBOX_SIZE
-        end)
-        local hitboxRangeBtn = createFeatureButton(subScroll, "命中框范围", false, function() end, true)
-        hitboxRangeBtn.Text = "范围: " .. CFG.HITBOX_RANGE
-        hitboxRangeBtn.MouseButton1Click:Connect(function()
-            local newR = CFG.HITBOX_RANGE + 5
-            if newR > 100 then newR = 5 end
-            CFG.HITBOX_RANGE = newR
-            hitboxRangeBtn.Text = "范围: " .. CFG.HITBOX_RANGE
-        end)
-        createFeatureButton(subScroll, "重新加入服务器", false, function() pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end) end, true)
-        createFeatureButton(subScroll, "切换服务器", false, function()
-            local servers = {}
-            local success, result = pcall(function() return game:HttpGet(string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", game.PlaceId)) end)
-            if success and result then
-                local ok, data = pcall(function() return HttpService:JSONDecode(result) end)
-                if ok and data.data then
-                    for _, v in pairs(data.data) do
-                        if v.playing < v.maxPlayers and v.id ~= game.JobId then table.insert(servers, v.id) end
-                    end
-                end
-            end
-            if #servers > 0 then pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, servers[math.random(1,#servers)], LocalPlayer) end)
-            else print("未找到可用服务器") end
-        end, true)
-    end
-
     if name == "界面设置" then
         createFeatureButton(subScroll, "显示状态", true, function() ShowStatus = not ShowStatus updateStatusPanel() end)
         createFeatureButton(subScroll, "自由拖拽", true, function() LockSubUIs = not LockSubUIs end)
@@ -1681,8 +707,8 @@ local function initMainButtonDragging()
     UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then if bDrag then bDrag = false if not bMoved then MainFrame.Visible = not MainFrame.Visible TweenService:Create(Blur, TweenInfo.new(0.4, Enum.EasingStyle.Back), {Size = MainFrame.Visible and 14 or 0}):Play() else MainButton.Position = (MainButton.AbsolutePosition.X < ScreenGui.AbsoluteSize.X/2) and UDim2.new(0, 5, MainButton.Position.Y.Scale, MainButton.Position.Y.Offset) or UDim2.new(1, -40, MainButton.Position.Y.Scale, MainButton.Position.Y.Offset) end end end end)
 end
 
-local SubLists = {["主要功能"] = {}, ["透视功能"] = {}, ["杀戮功能"] = {}, ["玩家功能"] = {}, ["职业功能"] = {}, ["其他功能"] = {}, ["界面设置"] = {}}
-local listOrder = {"主要功能", "透视功能", "杀戮功能", "玩家功能", "职业功能", "其他功能", "界面设置"}
+local SubLists = {["战斗"] = {}, ["移动"] = {}, ["玩家"] = {}, ["视觉效果"] = {}, ["界面设置"] = {}}
+local listOrder = {"战斗", "移动", "玩家", "视觉效果", "界面设置"}
 for _, c in ipairs(listOrder) do 
     if c == "界面设置" then 
         createSettingSub() 
@@ -1698,12 +724,8 @@ initResizeLogic()
 updateAllThemes()
 updateFontSizes()
 
--- 初始化部分功能
-setupWalkSpeed()
-setupKeepBackpack()
-setupNoSlow()
-setupSelfRescue()
-if CFG.AUTO_JUMP then startAutoJumpMonitoring() end
-if CFG.HITBOX_EXPANDER then updateHitboxExpander() end
-if CFG.FULLBRIGHT then updateFullbright() end
-if CFG.NO_FOG then updateNoFog() end
+-- 初始化飞行控制（避免第一次点击时卡顿）
+spawn(function()
+    wait(1)
+    getFlyControl()
+end)
