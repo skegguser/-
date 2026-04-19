@@ -1,5 +1,6 @@
--- ================= SDGT ELIT 完整整合版 =================
+-- ================= SDGT ELIT 完整整合版（修复版） =================
 -- 包含：原SDGT ELIT所有枪械/刺刀/透视/静默瞄准/UI + 融合GB脚本的杀戮光环、职业、地图功能
+-- 修复：尺寸调整功能正常；地图功能输入框字体统一缩放
 -- 飞行移至移动选项卡，无敌碰飞移至玩家选项卡，职业/地图功能归入玩家选项卡
 
 local TweenService = game:GetService("TweenService")
@@ -53,10 +54,9 @@ local CFG = {
     WUDI_ON = false,
     SPEED_ENABLED = false,
     SPEED_VALUE = 32,
-    -- 疾跑增强已删除（未使用）
 }
 
--- ========== 原 SDGT ELIT 的全局变量 ==========
+-- ========== 全局变量 ==========
 local activeStates = {}
 local espHighlights = {}
 local persistentBurners = {}
@@ -111,7 +111,7 @@ local wudiMoveLoopRunning = true
 local wudiPushLoopRunning = true
 local originalWalkSpeed = nil
 
--- 飞行UI变量（在移动选项卡中创建）
+-- 飞行UI变量
 local flyScreenGui = nil
 
 -- ========== 辅助函数（原SDGT ELIT） ==========
@@ -304,7 +304,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end)
 end)
 
--- 刺刀辅助函数
+-- 刺刀辅助
 local function getBayonetDynamicHeight(distance)
     local optimalDist = 12
     local dropScale = 140
@@ -414,7 +414,7 @@ RunService.RenderStepped:Connect(function()
     else bayonetLaser.Transparency = 1 end
 end)
 
--- 自动面对僵尸（原SDGT）
+-- 自动面对僵尸
 local function isBehindWall(targetPart)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -462,7 +462,7 @@ local function scanTarget()
     currentTarget = closest
 end
 
--- ESP 透视（原SDGT）
+-- ESP 透视
 local function createESP(model, color, label)
     if espHighlights[model] then return end
     local torso = model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
@@ -569,7 +569,7 @@ oldIndex = hookmetamethod(game, "__index", function(self, index)
     return oldIndex(self, index)
 end)
 
--- ================= 无敌（碰飞）功能（放入玩家选项卡） =================
+-- ================= 无敌（碰飞）功能 =================
 local function findPlayer(text)
     text = text:lower()
     for _, plr in pairs(Players:GetPlayers()) do
@@ -629,7 +629,7 @@ spawn(function()
     end
 end)
 
--- ================= 移动 Speed 增强（移动选项卡） =================
+-- ================= 移动 Speed 增强 =================
 spawn(function()
     while true do
         wait()
@@ -658,7 +658,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end
 end)
 
--- ================= 飞行绕过独立 UI（放入移动选项卡） =================
+-- ================= 飞行独立 UI（放入移动选项卡） =================
 local function createFlyUI()
     if flyScreenGui then flyScreenGui:Destroy() end
     flyScreenGui = Instance.new("ScreenGui", PlayerGui)
@@ -768,7 +768,6 @@ local function createFlyUI()
         if isFlying then startFly() else stopFly() end
     end)
 
-    -- 拖动逻辑
     local dragging, dragStart, startPos
     local function update(input)
         local delta = input.Position - dragStart
@@ -791,7 +790,6 @@ local function createFlyUI()
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then update(input) end
     end)
 
-    -- 关闭和最小化按钮
     local function topBtn(t, x, c, f)
         local b = Instance.new("TextButton", MainFrame)
         b.Size = UDim2.new(0, 25, 0, 25)
@@ -814,7 +812,6 @@ local function createFlyUI()
     MainFrame.Size = UDim2.new(0, 0, 0, 0)
     MainFrame:TweenSize(UDim2.new(0, 180, 0, 140), "Out", "Back", 0.5)
 
-    -- 摔伤拦截（飞行专用）
     local mt = getrawmetatable(game)
     local oldNC = mt.__namecall
     setreadonly(mt, false)
@@ -825,10 +822,9 @@ local function createFlyUI()
     setreadonly(mt, true)
 end
 
--- ================= 杀戮光环全能（融合 GB 脚本的刺刀/肘击/卡宾枪） =================
--- 以下功能来自第二个文件（GB），合并为“杀戮光环全能”
+-- ================= 杀戮光环全能（融合 GB 脚本） =================
 local KillAuraAllInOne = false
-local BayonetKillAura = false   -- 刺刀杀戮光环（近战）
+local BayonetKillAura = false
 local BayonetAttackBarrels = false
 local BayonetAutoRotate = false
 local ElbowStrike = false
@@ -850,16 +846,13 @@ local function rotateToTarget(character, target)
     return true
 end
 
-local function getCharacter()
-    return LocalPlayer.Character
-end
+local function getCharacter() return LocalPlayer.Character end
 
 local function distance(a, b)
     if not a or not b or not a:FindFirstChild("HumanoidRootPart") or not b:FindFirstChild("HumanoidRootPart") then return math.huge end
     return (a.HumanoidRootPart.Position - b.HumanoidRootPart.Position).magnitude
 end
 
--- 刺刀杀戮光环循环
 local function bayonetKillAuraLoop()
     while KillAuraAllInOne and BayonetKillAura do
         local character = getCharacter()
@@ -892,7 +885,6 @@ local function bayonetKillAuraLoop()
     end
 end
 
--- 肘击循环
 local function elbowStrikeLoop()
     while KillAuraAllInOne and ElbowStrike do
         local character = getCharacter()
@@ -923,7 +915,6 @@ local function elbowStrikeLoop()
     end
 end
 
--- 卡宾枪肘击循环
 local function carbineStunLoop()
     while KillAuraAllInOne and CarbineStun do
         local character = getCharacter()
@@ -968,7 +959,6 @@ local function stopKillAuraFunction(funcName)
     if activeKillAuraFunctions[funcName] then task.cancel(activeKillAuraFunctions[funcName]) activeKillAuraFunctions[funcName] = nil end
 end
 
--- 当杀戮光环全能开关打开时，根据子开关启动相应循环
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -982,8 +972,7 @@ task.spawn(function()
     end
 end)
 
--- ================= 职业功能（医疗兵、工兵、牧师）放入玩家选项卡 =================
--- 医疗兵自动请求治疗
+-- ================= 职业功能（医疗兵、工兵、牧师） =================
 local AutoRequestHealEnabled = false
 local HealRange = 10
 local HealCooldown = 3
@@ -1032,7 +1021,6 @@ task.spawn(function()
     end
 end)
 
--- 工兵自动修复
 local AutoRepairEnabled = false
 local AutoRepairCooldown = 0.1
 
@@ -1074,7 +1062,6 @@ task.spawn(function()
     end
 end)
 
--- 牧师自动祝福
 local AutoBlessEnabled = false
 local BlessThreshold = 50
 local BlessCooldown = 2
@@ -1149,15 +1136,14 @@ task.spawn(function()
     end
 end)
 
--- ================= 地图自动功能（敲钟、水桶、修桥、木头）放入玩家选项卡 =================
+-- ================= 地图自动功能 =================
 local AutoBellActive = false
 local AutoBucketActive = false
 local AutoRepairBridgeActive = false
 local AutoGetLogsActive = false
 local AutoPlaceLogsActive = false
-local AutoSpeed = 100  -- 毫秒
+local AutoSpeed = 100
 
--- 自动敲钟（莱比锡）
 task.spawn(function()
     while true do
         task.wait(0.2)
@@ -1179,7 +1165,6 @@ task.spawn(function()
     end
 end)
 
--- 自动水桶灭火
 task.spawn(function()
     while true do
         task.wait(0.2)
@@ -1198,7 +1183,6 @@ task.spawn(function()
     end
 end)
 
--- 自动修桥（别列津）
 task.spawn(function()
     while true do
         task.wait(0.2)
@@ -1248,7 +1232,6 @@ task.spawn(function()
     end
 end)
 
--- 自动拿木头
 task.spawn(function()
     while true do
         task.wait(math.max(0.05, (1010 - AutoSpeed) / 1000))
@@ -1276,7 +1259,6 @@ task.spawn(function()
     end
 end)
 
--- 自动放木头
 task.spawn(function()
     while true do
         task.wait(math.max(0.05, (1010 - AutoSpeed) / 1000))
@@ -1291,7 +1273,7 @@ task.spawn(function()
     end
 end)
 
--- ================= UI 部分（基于原 SDGT ELIT，增加整合的开关） =================
+-- ================= UI 部分（修复尺寸调整 + 统一字体） =================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SDGT_Elite_Gui"
 ScreenGui.ResetOnSpawn = false
@@ -1309,6 +1291,7 @@ local FeatureStates, CategoryStates, ActiveSubUIs, SubUIFrames = {}, {}, {}, {}
 local UIStrokes, AllButtons, AllTitles = {}, {}, {}
 local CurrentTheme, ForcedTextColor, UseRainbowTitle, LockSubUIs, ShowStatus, UseTextGradient = "Dark", nil, false, true, true, true
 
+-- Resize Handle 修复：确保可见且可拖拽
 local ResizeHandle = Instance.new("ImageButton")
 ResizeHandle.Size, ResizeHandle.AnchorPoint, ResizeHandle.BackgroundColor3, ResizeHandle.BackgroundTransparency, ResizeHandle.AutoButtonColor, ResizeHandle.Visible, ResizeHandle.ZIndex = UDim2.fromOffset(20, 20), Vector2.new(1, 1), Color3.fromRGB(255, 255, 255), 1, false, false, 100
 
@@ -1340,12 +1323,14 @@ end
 
 local BASE_WIDTH = 90
 local BASE_FONT_SIZE = 8
+local extraTextInputs = {} -- 存储需要统一字体的输入框
 
 local function updateFontSizes()
     local scale = math.max(0.6, math.min(2, UI_WIDTH / BASE_WIDTH))
     local newSize = math.floor(BASE_FONT_SIZE * scale)
     for _, btn in ipairs(AllButtons) do if btn:IsA("TextButton") then btn.TextSize = newSize end end
     for _, title in ipairs(AllTitles) do if title:IsA("TextButton") then title.TextSize = math.floor(newSize * 1.2) end end
+    for _, input in ipairs(extraTextInputs) do if input and input:IsA("TextBox") then input.TextSize = newSize end end
     updateStatusPanel()
 end
 
@@ -1530,7 +1515,7 @@ local function toggleSubUI(name)
     else table.insert(ActiveSubUIs, target) if MainFrame.Visible then target.Visible = true end end
 end
 
--- 创建子窗口（战斗、移动、视觉效果、玩家）
+-- 创建子窗口
 local function createSubWindow(name, items)
     local sub = createBaseFrame(name.."_Sub")
     sub.Parent = ScreenGui
@@ -1541,7 +1526,7 @@ local function createSubWindow(name, items)
     Instance.new("UIListLayout", subScroll).SortOrder = Enum.SortOrder.LayoutOrder
     
     if name == "Combat" then
-        -- 原战斗功能（跳跃攻击、刺刀辅助、枪械模组）
+        -- 原战斗功能
         local jumpContainer = Instance.new("Frame")
         jumpContainer.Size, jumpContainer.BackgroundTransparency, jumpContainer.ClipsDescendants, jumpContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", jumpContainer).SortOrder = Enum.SortOrder.LayoutOrder
@@ -1605,7 +1590,7 @@ local function createSubWindow(name, items)
         local mortarTime = createFeatureButton(gunContainer, "Mortar Time", true, function() CFG.HAND_MORTAR_TIMING = CategoryStates["Mortar Time"] end)
         mortarTime.Text = "迫击炮时机"
         
-        -- 杀戮光环全能（整合GB脚本）
+        -- 杀戮光环全能
         local killAuraContainer = Instance.new("Frame")
         killAuraContainer.Size, killAuraContainer.BackgroundTransparency, killAuraContainer.ClipsDescendants, killAuraContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", killAuraContainer).SortOrder = Enum.SortOrder.LayoutOrder
@@ -1632,7 +1617,6 @@ local function createSubWindow(name, items)
     end
     
     if name == "Movement" then
-        -- 移动选项卡：Speed增强 + 丝滑飞行
         local speedContainer = Instance.new("Frame")
         speedContainer.Size, speedContainer.BackgroundTransparency, speedContainer.ClipsDescendants, speedContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", speedContainer).SortOrder = Enum.SortOrder.LayoutOrder
@@ -1647,7 +1631,8 @@ local function createSubWindow(name, items)
         local speedLabel = Instance.new("TextLabel")
         speedLabel.Size, speedLabel.BackgroundTransparency, speedLabel.Text, speedLabel.TextColor3, speedLabel.TextSize, speedLabel.Font, speedLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "Speed: " .. CFG.SPEED_VALUE, Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
         local speedBox = Instance.new("TextBox")
-        speedBox.Size, speedBox.Position, speedBox.BackgroundTransparency, speedBox.Text, speedBox.TextColor3, speedBox.TextSize, speedBox.Font, speedBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.SPEED_VALUE), Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
+        speedBox.Size, speedBox.Position, speedBox.BackgroundTransparency, speedBox.Text, speedBox.TextColor3, speedBox.TextSize, speedBox.Font, speedBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.SPEED_VALUE), Color3.new(1,1,1), 8, Enum.Font.Gotham, speedSliderFrame
+        table.insert(extraTextInputs, speedBox)
         speedBox.FocusLost:Connect(function()
             local val = tonumber(speedBox.Text)
             if val then
@@ -1664,7 +1649,6 @@ local function createSubWindow(name, items)
             end
         end)
         
-        -- 丝滑飞行（独立UI）
         local flyBtn = createFeatureButton(subScroll, "丝滑飞行", false, function()
             if FeatureStates["丝滑飞行"] then
                 createFlyUI()
@@ -1690,7 +1674,6 @@ local function createSubWindow(name, items)
     end
     
     if name == "Player" then
-        -- 玩家选项卡：无敌(碰飞)、职业功能、地图功能
         -- 无敌碰飞
         local wudiBtn = createFeatureButton(subScroll, "无敌", false, function()
             CFG.WUDI_ON = not CFG.WUDI_ON
@@ -1717,7 +1700,8 @@ local function createSubWindow(name, items)
         local healLabel = Instance.new("TextLabel")
         healLabel.Size, healLabel.BackgroundTransparency, healLabel.Text, healLabel.TextColor3, healLabel.TextSize, healLabel.Font, healLabel.Parent = UDim2.new(0.5, 0, 1, 0), 1, "阈值: " .. HealThreshold, Color3.new(1,1,1), 12, Enum.Font.Gotham, healThresholdSlider
         local healBox = Instance.new("TextBox")
-        healBox.Size, healBox.Position, healBox.BackgroundTransparency, healBox.Text, healBox.TextColor3, healBox.TextSize, healBox.Font, healBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(HealThreshold), Color3.new(1,1,1), 12, Enum.Font.Gotham, healThresholdSlider
+        healBox.Size, healBox.Position, healBox.BackgroundTransparency, healBox.Text, healBox.TextColor3, healBox.TextSize, healBox.Font, healBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(HealThreshold), Color3.new(1,1,1), 8, Enum.Font.Gotham, healThresholdSlider
+        table.insert(extraTextInputs, healBox)
         healBox.FocusLost:Connect(function()
             local val = tonumber(healBox.Text)
             if val then HealThreshold = math.clamp(val, 1, 100) healBox.Text = tostring(HealThreshold) healLabel.Text = "阈值: " .. HealThreshold end
@@ -1749,13 +1733,14 @@ local function createSubWindow(name, items)
         local blessLabel = Instance.new("TextLabel")
         blessLabel.Size, blessLabel.BackgroundTransparency, blessLabel.Text, blessLabel.TextColor3, blessLabel.TextSize, blessLabel.Font, blessLabel.Parent = UDim2.new(0.5, 0, 1, 0), 1, "感染阈值: " .. BlessThreshold, Color3.new(1,1,1), 12, Enum.Font.Gotham, blessSliderFrame
         local blessBox = Instance.new("TextBox")
-        blessBox.Size, blessBox.Position, blessBox.BackgroundTransparency, blessBox.Text, blessBox.TextColor3, blessBox.TextSize, blessBox.Font, blessBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(BlessThreshold), Color3.new(1,1,1), 12, Enum.Font.Gotham, blessSliderFrame
+        blessBox.Size, blessBox.Position, blessBox.BackgroundTransparency, blessBox.Text, blessBox.TextColor3, blessBox.TextSize, blessBox.Font, blessBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(BlessThreshold), Color3.new(1,1,1), 8, Enum.Font.Gotham, blessSliderFrame
+        table.insert(extraTextInputs, blessBox)
         blessBox.FocusLost:Connect(function()
             local val = tonumber(blessBox.Text)
             if val then BlessThreshold = math.clamp(val, 0, 200) blessBox.Text = tostring(BlessThreshold) blessLabel.Text = "感染阈值: " .. BlessThreshold end
         end)
         
-        -- 地图功能（莱比锡、别列津）
+        -- 地图功能
         local mapContainer = Instance.new("Frame")
         mapContainer.Size, mapContainer.BackgroundTransparency, mapContainer.ClipsDescendants, mapContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
         Instance.new("UIListLayout", mapContainer).SortOrder = Enum.SortOrder.LayoutOrder
@@ -1779,7 +1764,8 @@ local function createSubWindow(name, items)
         local speedLabelMap = Instance.new("TextLabel")
         speedLabelMap.Size, speedLabelMap.BackgroundTransparency, speedLabelMap.Text, speedLabelMap.TextColor3, speedLabelMap.TextSize, speedLabelMap.Font, speedLabelMap.Parent = UDim2.new(0.5, 0, 1, 0), 1, "速度: " .. AutoSpeed .. "ms", Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrameMap
         local speedBoxMap = Instance.new("TextBox")
-        speedBoxMap.Size, speedBoxMap.Position, speedBoxMap.BackgroundTransparency, speedBoxMap.Text, speedBoxMap.TextColor3, speedBoxMap.TextSize, speedBoxMap.Font, speedBoxMap.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(AutoSpeed), Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrameMap
+        speedBoxMap.Size, speedBoxMap.Position, speedBoxMap.BackgroundTransparency, speedBoxMap.Text, speedBoxMap.TextColor3, speedBoxMap.TextSize, speedBoxMap.Font, speedBoxMap.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(AutoSpeed), Color3.new(1,1,1), 8, Enum.Font.Gotham, speedSliderFrameMap
+        table.insert(extraTextInputs, speedBoxMap)
         speedBoxMap.FocusLost:Connect(function()
             local val = tonumber(speedBoxMap.Text)
             if val then AutoSpeed = math.clamp(val, 10, 1000) speedBoxMap.Text = tostring(AutoSpeed) speedLabelMap.Text = "速度: " .. AutoSpeed .. "ms" end
@@ -1790,6 +1776,7 @@ local function createSubWindow(name, items)
     SubUIFrames[name] = sub
 end
 
+-- UI设置子窗口
 local function createSettingSub()
     local name = "UI Setup"
     local sub = createBaseFrame(name.."_Sub")
@@ -1808,7 +1795,15 @@ local function createSettingSub()
     textFadeBtn.Text = "文字渐变"
     local resizeContainer = Instance.new("Frame")
     resizeContainer.Name, resizeContainer.Size, resizeContainer.BackgroundTransparency, resizeContainer.ClipsDescendants, resizeContainer.Parent = "ResizeSection", UDim2.new(1, 0, 0, 0), 1, true, subScroll
-    local resizeUIBtn = createFeatureButton(subScroll, "Resize UI", true, function() local s = CategoryStates["Resize UI"] ResizeHandle.Visible = s TweenService:Create(resizeContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, BAR_HEIGHT) or UDim2.new(1, 0, 0, 0)}):Play() end)
+    local resizeUIBtn = createFeatureButton(subScroll, "Resize UI", true, function() 
+        local s = CategoryStates["Resize UI"] 
+        ResizeHandle.Visible = s 
+        if s and MainFrame.Visible then
+            ResizeHandle.Parent = lastActiveFrame or MainFrame
+            ResizeHandle.Position = UDim2.new(1, 0, 1, 0)
+        end
+        TweenService:Create(resizeContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, BAR_HEIGHT) or UDim2.new(1, 0, 0, 0)}):Play()
+    end)
     resizeUIBtn.Text = "调整界面大小"
     local resetSizeBtn = createFeatureButton(resizeContainer, "Reset Size", false, function() UI_WIDTH, UI_HEIGHT = 90, 160 updateUISizes() end, true)
     resetSizeBtn.Text = "重置尺寸"
@@ -1827,15 +1822,59 @@ local function createSettingSub()
     SubUIFrames[name] = sub
 end
 
+-- Resize 拖拽逻辑（修复）
+local isResizing = false
+local lastActiveFrame = nil
+local function initResizeLogic()
+    ResizeHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isResizing = true
+            dragStart = input.Position
+            startSize = Vector2.new(UI_WIDTH, UI_HEIGHT)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if isResizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            UI_WIDTH = math.clamp(startSize.X + delta.X, 40, 400)
+            UI_HEIGHT = math.clamp(startSize.Y + delta.Y, 80, 800)
+            updateUISizes()
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isResizing = false
+        end
+    end)
+end
+
+-- 渲染循环中更新ResizeHandle的父级
 RunService.RenderStepped:Connect(function()
     local color = Color3.fromHSV(tick() % 5 / 5, 0.7, 1)
     for _, s in ipairs(UIStrokes) do if s and s.Parent then s.Color = color end end
     if UseRainbowTitle then local rainbow = Color3.fromHSV(tick() % 3 / 3, 0.8, 1) for _, t in ipairs(AllTitles) do t.TextColor3 = rainbow end end
     if MainFrame.Visible then
         local currentX, lastSub = 4, nil
-        for _, sub in ipairs(ActiveSubUIs) do sub.Visible = true if LockSubUIs then sub.Position = UDim2.new(MainFrame.Position.X.Scale, MainFrame.Position.X.Offset + UI_WIDTH + currentX, MainFrame.Position.Y.Scale, MainFrame.Position.Y.Offset) currentX = currentX + UI_WIDTH + 4 end if sub.Visible and sub.Size.Y.Offset > BAR_HEIGHT + 5 then lastSub = sub end end
-        if ResizeHandle.Visible then ResizeHandle.Parent, ResizeHandle.Position = lastSub or MainFrame, UDim2.new(1, 0, 1, 0) end
-    else for _, sub in ipairs(ActiveSubUIs) do sub.Visible = false end ResizeHandle.Parent = nil end
+        for _, sub in ipairs(ActiveSubUIs) do 
+            sub.Visible = true 
+            if LockSubUIs then 
+                sub.Position = UDim2.new(MainFrame.Position.X.Scale, MainFrame.Position.X.Offset + UI_WIDTH + currentX, MainFrame.Position.Y.Scale, MainFrame.Position.Y.Offset) 
+                currentX = currentX + UI_WIDTH + 4 
+            end 
+            if sub.Visible and sub.Size.Y.Offset > BAR_HEIGHT + 5 then lastSub = sub end 
+        end
+        if ResizeHandle.Visible then 
+            local targetFrame = lastSub or MainFrame
+            lastActiveFrame = targetFrame
+            ResizeHandle.Parent = targetFrame
+            ResizeHandle.Position = UDim2.new(1, 0, 1, 0)
+        else
+            ResizeHandle.Parent = nil
+        end
+    else 
+        for _, sub in ipairs(ActiveSubUIs) do sub.Visible = false end 
+        ResizeHandle.Parent = nil
+    end
 end)
 
 local MainButton = Instance.new("TextButton")
@@ -1867,3 +1906,6 @@ initMainButtonDragging()
 initResizeLogic()
 updateAllThemes()
 updateFontSizes()
+
+-- 全局通知函数（供职业功能使用）
+_G.Library = { Notify = function(opt) pcall(function() warn("[Notify]", opt.Title, opt.Description) end) end }
