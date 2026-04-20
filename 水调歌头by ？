@@ -1,8 +1,6 @@
--- ================= SDGT ELIT 完整整合版（UI完全恢复，仅新增近战杀戮光环和无敌碰飞） =================
--- 保留原SDGT ELIT的所有UI行为（主按钮可拖拽、点击展开/收起，子面板可拖动，尺寸可调等）
--- 新增功能：
---   1. 近战杀戮光环（战斗选项卡内）：支持多种近战武器，含自动朝向、自动装备、跳跃攻击、移速调节
---   2. 无敌碰飞（玩家选项卡内）：开启后自动吸附并弹飞最近的僵尸，同时免疫自伤
+-- ================= SDGT ELIT 最终完整版 =================
+-- 包含：枪械、刺刀、静默瞄准、透视、自动面对、UI
+-- 新增：近战杀戮光环（最快速度）、无敌碰飞（自动吸附）、职业功能（医生/工兵/牧师）、移速滑块
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -12,14 +10,12 @@ local Lighting = game:GetService("Lighting")
 local GuiService = game:GetService("GuiService")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Camera = workspace:WaitForChild("Camera")
 
--- ========== 原 SDGT ELIT 的 CFG 配置（完整保留） ==========
+-- ========== 原 SDGT ELIT 的 CFG 配置 ==========
 local CFG = {
     JUMP_ON = false,
     AUTO_FACE_ON = false,
@@ -56,10 +52,12 @@ local CFG = {
     MELEE_AUTO_FACE = false,
     MELEE_AUTO_EQUIP = false,
     MELEE_JUMP_SWING = false,
-    MELEE_LOOP_SPEED = 16,
 
     -- 新增：无敌碰飞
     WUDI_FLY = false,
+
+    -- 移动速度
+    WALK_SPEED = 16,
 }
 
 -- ========== 全局变量 ==========
@@ -110,27 +108,6 @@ local fovCircle = nil
 local reloadInProgress = {}
 local activeConnections = {}
 local watchedTools = {}
-
--- 无敌碰飞变量
-local wudiTarget = nil
-local wudiMoveLoopRunning = true
-
--- 近战杀戮光环变量
-local WEAPON_DB = {
-    ["Stake"] = {range = 13, delay = 0.12, swing = "Over", mult = 12},
-    ["Hand Axe"] = {range = 14, delay = 0.10, swing = "Over", mult = 12},
-    ["Boarding Axe"] = {range = 15, delay = 0.10, swing = "Over", mult = 15},
-    ["Heavy Sabre"] = {range = 15, delay = 0.10, swing = "Thrust", mult = 18},
-    ["Sabre"] = {range = 15, delay = 0.10, swing = "Thrust", mult = 18},
-    ["Axe"] = {range = 14, delay = 0.10, swing = "Side", mult = 12},
-    ["Pickaxe"] = {range = 14, delay = 0.12, swing = "Over", mult = 12},
-    ["Spontoon"] = {range = 25, delay = 0.10, swing = "Thrust", mult = 12},
-    ["Officer's Sabre"] = {range = 15, delay = 0.10, swing = "Thrust", mult = 15}
-}
-local lastMeleeAttackTime = 0
-local meleeCurrentTarget = nil
-local meleeCurrentRemote = nil
-local meleeCurrentConfig = nil
 
 -- ========== 辅助函数（原SDGT ELIT） ==========
 local function ensureFovGui()
@@ -322,7 +299,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end)
 end)
 
--- 刺刀辅助（原SDGT ELIT）
+-- 刺刀辅助
 local function getBayonetDynamicHeight(distance)
     local optimalDist = 12
     local dropScale = 140
@@ -432,7 +409,7 @@ RunService.RenderStepped:Connect(function()
     else bayonetLaser.Transparency = 1 end
 end)
 
--- 自动面对僵尸（原SDGT ELIT）
+-- 自动面对僵尸
 local function isBehindWall(targetPart)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -480,7 +457,7 @@ local function scanTarget()
     currentTarget = closest
 end
 
--- ESP 透视（原SDGT ELIT）
+-- ESP 透视
 local function createESP(model, color, label)
     if espHighlights[model] then return end
     local torso = model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
@@ -587,7 +564,93 @@ oldIndex = hookmetamethod(game, "__index", function(self, index)
     return oldIndex(self, index)
 end)
 
--- ================= 新增：近战杀戮光环（基于“水调歌头.lua”逻辑） =================
+-- ========== 新增：无敌碰飞（直接执行碰飞.lua 的核心逻辑，自动吸附最近僵尸） ==========
+local wudiTarget = nil
+local wudiMoveLoopRunning = true
+
+local function getNearestZombieForWudi(range)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local closest, minDist = nil, range
+    local zombies = workspace:FindFirstChild("Zombies")
+    if zombies then
+        for _, z in ipairs(zombies:GetChildren()) do
+            if z:IsA("Model") and z:FindFirstChild("HumanoidRootPart") then
+                local zHrp = z:FindFirstChild("HumanoidRootPart")
+                local hum = z:FindFirstChildOfClass("Humanoid")
+                if zHrp and hum and hum.Health > 0 then
+                    local d = (hrp.Position - zHrp.Position).Magnitude
+                    if d < minDist then
+                        minDist = d
+                        closest = z
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+task.spawn(function()
+    while wudiMoveLoopRunning do
+        task.wait(0.03)
+        if not CFG.WUDI_FLY then 
+            wudiTarget = nil
+            continue 
+        end
+        local targetZombie = getNearestZombieForWudi(20)
+        if targetZombie then
+            wudiTarget = targetZombie
+        else
+            wudiTarget = nil
+            continue
+        end
+        local char = wudiTarget
+        if not char or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then
+            wudiTarget = nil
+            continue
+        end
+        local myChar = LocalPlayer.Character
+        local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        local targetHRP = char:FindFirstChild("HumanoidRootPart")
+        if myHRP and targetHRP then
+            local offset = targetHRP.Velocity.Magnitude < 0.1 and 0 or 7
+            local goal = targetHRP.CFrame * CFrame.new(0,0,-offset) * CFrame.Angles(0, math.rad(-3), 0)
+            myHRP.CFrame = myHRP.CFrame:Lerp(goal, 0.4)
+            myHRP.Velocity = Vector3.new(0,0,0)
+            myHRP.RotVelocity = Vector3.new(0,0,0)
+        end
+    end
+end)
+
+-- 拦截自伤（无敌）
+local oldForceSelfDamage
+oldForceSelfDamage = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+    if method == "FireServer" and tostring(self) == "ForceSelfDamage" then
+        if CFG.WUDI_FLY then return nil end
+    end
+    return oldForceSelfDamage(self, ...)
+end)
+
+-- ========== 新增：近战杀戮光环（最快攻击速度 0.01 秒） ==========
+local WEAPON_DB = {
+    ["Stake"] = {range = 13, delay = 0.01, swing = "Over", mult = 12},
+    ["Hand Axe"] = {range = 14, delay = 0.01, swing = "Over", mult = 12},
+    ["Boarding Axe"] = {range = 15, delay = 0.01, swing = "Over", mult = 15},
+    ["Heavy Sabre"] = {range = 15, delay = 0.01, swing = "Thrust", mult = 18},
+    ["Sabre"] = {range = 15, delay = 0.01, swing = "Thrust", mult = 18},
+    ["Axe"] = {range = 14, delay = 0.01, swing = "Side", mult = 12},
+    ["Pickaxe"] = {range = 14, delay = 0.01, swing = "Over", mult = 12},
+    ["Spontoon"] = {range = 25, delay = 0.01, swing = "Thrust", mult = 12},
+    ["Officer's Sabre"] = {range = 15, delay = 0.01, swing = "Thrust", mult = 15}
+}
+local lastMeleeAttackTime = 0
+local meleeCurrentTarget = nil
+local meleeCurrentRemote = nil
+local meleeCurrentConfig = nil
+
 local function isDangerousCore(obj)
     if not obj or not obj:IsA("Model") then return true end
     local current = obj
@@ -709,7 +772,110 @@ task.spawn(function()
     end
 end)
 
--- 设置行走速度（近战移速）
+-- ========== 新增：职业功能（医生、工兵、牧师）完全照抄 Atomic 文件 ==========
+-- 医生
+local AutoRequestHealEnabled = false
+local HealThreshold = 25
+task.spawn(function()
+    while task.wait(0.25) do
+        if not AutoRequestHealEnabled then continue end
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local humanoid = player.Character:FindFirstChildWhichIsA("Humanoid")
+                if humanoid and humanoid.Health <= humanoid.MaxHealth * (HealThreshold / 100) then
+                    local localChar = LocalPlayer.Character
+                    if localChar then
+                        local medSupplies = localChar:FindFirstChild("Medical Supplies")
+                        if medSupplies and medSupplies:FindFirstChild("RemoteEvent") then
+                            local targetHRP = humanoid.Parent:FindFirstChild("HumanoidRootPart") or humanoid.Parent:FindFirstChild("Torso")
+                            if targetHRP and (localChar.HumanoidRootPart.Position - targetHRP.Position).Magnitude <= 10 then
+                                pcall(function() medSupplies.RemoteEvent:FireServer("SendRequest", humanoid) end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- 工兵
+local AutoRepairEnabled = false
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if not AutoRepairEnabled then continue end
+        local char = LocalPlayer.Character
+        if char then
+            local hammer = char:FindFirstChild("Hammer")
+            if hammer and hammer:FindFirstChild("RemoteEvent") then
+                local origin = Camera.CFrame.Position
+                local direction = Camera.CFrame.LookVector * 50
+                local params = RaycastParams.new()
+                params.FilterDescendantsInstances = {LocalPlayer.Character}
+                params.FilterType = Enum.RaycastFilterType.Blacklist
+                local rayResult = Workspace:Raycast(origin, direction, params)
+                if rayResult and rayResult.Instance then
+                    local model = rayResult.Instance:FindFirstAncestorOfClass("Model")
+                    if model then
+                        local buildHealth = model:FindFirstChild("BuildingHealth") or (model.Parent and model.Parent:FindFirstChild("BuildingHealth"))
+                        if buildHealth then
+                            local current = buildHealth.Value
+                            local max = buildHealth:GetAttribute("MaxHealth")
+                            if max and current < max then
+                                pcall(function() hammer.RemoteEvent:FireServer("Repair", buildHealth) end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- 牧师
+local AutoBlessEnabled = false
+local BlessThreshold = 50
+task.spawn(function()
+    while task.wait(0.25) do
+        if not AutoBlessEnabled then continue end
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player == LocalPlayer then continue end
+            local infectedVal = nil
+            local wsPlayers = Workspace:FindFirstChild("Players")
+            if wsPlayers then
+                local wsP = wsPlayers:FindFirstChild(player.Name)
+                if wsP and wsP:FindFirstChild("UserStates") and wsP.UserStates:FindFirstChild("Infected") then
+                    infectedVal = wsP.UserStates.Infected.Value
+                end
+            end
+            if infectedVal and tonumber(infectedVal) >= BlessThreshold then
+                local localChar = LocalPlayer.Character
+                if localChar then
+                    local tool = localChar:FindFirstChild("Blessing")
+                    if not tool then
+                        for _, child in ipairs(localChar:GetChildren()) do
+                            if child:IsA("Tool") and child.Name:lower():find("bless") then
+                                tool = child; break
+                            end
+                        end
+                    end
+                    if tool and tool:FindFirstChild("RemoteEvent") then
+                        local targetHRP = player.Character and (player.Character:FindFirstChild("HumanoidRootPart") or player.Character:FindFirstChild("Torso"))
+                        if targetHRP and (localChar.HumanoidRootPart.Position - targetHRP.Position).Magnitude <= 15 then
+                            local humanoid = player.Character and player.Character:FindFirstChildWhichIsA("Humanoid")
+                            if humanoid then
+                                pcall(function() tool.RemoteEvent:FireServer("SendRequest", humanoid) end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ========== 移动速度控制（独立滑块） ==========
 task.spawn(function()
     while true do
         task.wait(0.1)
@@ -717,80 +883,13 @@ task.spawn(function()
         if char then
             local hum = char:FindFirstChildOfClass("Humanoid")
             if hum then
-                hum.WalkSpeed = CFG.MELEE_LOOP_SPEED
+                hum.WalkSpeed = CFG.WALK_SPEED
             end
         end
     end
 end)
 
--- ================= 新增：无敌碰飞（自动吸附并弹飞最近僵尸） =================
-local function getNearestZombieForWudi(range)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil end
-    local closest, minDist = nil, range
-    local zombies = workspace:FindFirstChild("Zombies")
-    if zombies then
-        for _, z in ipairs(zombies:GetChildren()) do
-            if z:IsA("Model") and z:FindFirstChild("HumanoidRootPart") then
-                local zHrp = z:FindFirstChild("HumanoidRootPart")
-                local hum = z:FindFirstChildOfClass("Humanoid")
-                if zHrp and hum and hum.Health > 0 then
-                    local d = (hrp.Position - zHrp.Position).Magnitude
-                    if d < minDist then
-                        minDist = d
-                        closest = z
-                    end
-                end
-            end
-        end
-    end
-    return closest
-end
-
-task.spawn(function()
-    while wudiMoveLoopRunning do
-        task.wait(0.03)
-        if not CFG.WUDI_FLY then 
-            wudiTarget = nil
-            continue 
-        end
-        local targetZombie = getNearestZombieForWudi(20)
-        if targetZombie then
-            wudiTarget = targetZombie
-        else
-            wudiTarget = nil
-            continue
-        end
-        local char = wudiTarget
-        if not char or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then
-            wudiTarget = nil
-            continue
-        end
-        local myChar = LocalPlayer.Character
-        local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        local targetHRP = char:FindFirstChild("HumanoidRootPart")
-        if myHRP and targetHRP then
-            local offset = targetHRP.Velocity.Magnitude < 0.1 and 0 or 7
-            local goal = targetHRP.CFrame * CFrame.new(0,0,-offset) * CFrame.Angles(0, math.rad(-3), 0)
-            myHRP.CFrame = myHRP.CFrame:Lerp(goal, 0.4)
-            myHRP.Velocity = Vector3.new(0,0,0)
-            myHRP.RotVelocity = Vector3.new(0,0,0)
-        end
-    end
-end)
-
--- 拦截自伤（无敌）
-local oldForceSelfDamage
-oldForceSelfDamage = hookmetamethod(game, "__namecall", function(self, ...)
-    local method = getnamecallmethod()
-    if method == "FireServer" and tostring(self) == "ForceSelfDamage" then
-        if CFG.WUDI_FLY then return nil end
-    end
-    return oldForceSelfDamage(self, ...)
-end)
-
--- ================= UI 部分（完全恢复原SDGT ELIT的UI，不改变任何行为） =================
+-- ========== UI 部分（完全恢复原 SDGT ELIT 的 UI，不改变任何行为） ==========
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SDGT_Elite_Gui"
 ScreenGui.ResetOnSpawn = false
@@ -893,10 +992,9 @@ local function updateStatusPanel()
         ["Show Range"]="显示范围", ["Bayonet Assist"]="刺刀辅助", ["Aim Bomber"]="瞄准炸弹兵", ["Gun Mods"]="枪械模组",
         ["Auto Shoot"]="自动射击", ["Silent Aim"]="静默瞄准", ["Insta Shoot"]="瞬间射击", ["Auto Reload"]="自动装填",
         ["Use FOV"]="使用视野", ["Show FOV"]="显示视野圈", ["Mortar Time"]="迫击炮时机", ["Zombie ESP"]="僵尸透视",
-        ["无敌碰飞"]="无敌碰飞", ["Speed 增强"]="Speed增强", ["丝滑飞行"]="丝滑飞行", ["近战杀戮光环"]="近战杀戮光环",
+        ["无敌碰飞"]="无敌碰飞", ["移速增强"]="移速增强", ["近战杀戮光环"]="近战杀戮光环",
         ["近战自动朝向"]="近战自动朝向", ["近战自动装备"]="近战自动装备", ["近战跳跃攻击"]="近战跳跃攻击",
-        ["医疗兵"]="医疗兵", ["工兵"]="工兵", ["牧师"]="牧师", ["自动敲钟"]="敲钟", ["自动水桶"]="水桶",
-        ["自动修桥"]="修桥", ["自动拿木头"]="拿木头", ["自动放木头"]="放木头"
+        ["医生"]="医生", ["工兵"]="工兵", ["牧师"]="牧师"
     }
     for i, name in ipairs(activeNames) do
         local display = nameMap[name] or name
@@ -1123,32 +1221,36 @@ local function createSubWindow(name, items)
         meleeAutoEquip.Text = "自动装备"
         local meleeJumpSwing = createFeatureButton(meleeContainer, "近战跳跃攻击", true, function() CFG.MELEE_JUMP_SWING = CategoryStates["近战跳跃攻击"] end)
         meleeJumpSwing.Text = "跳跃攻击"
+    end
+    
+    if name == "Movement" then
+        -- 移动选项卡：移速滑块
+        local speedContainer = Instance.new("Frame")
+        speedContainer.Size, speedContainer.BackgroundTransparency, speedContainer.ClipsDescendants, speedContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
+        Instance.new("UIListLayout", speedContainer).SortOrder = Enum.SortOrder.LayoutOrder
+        local speedMain = createFeatureButton(subScroll, "移速增强", false, function()
+            local s = FeatureStates["移速增强"]
+            TweenService:Create(speedContainer, TweenInfo.new(0.3, Enum.EasingStyle.Back), {Size = s and UDim2.new(1, 0, 0, 45) or UDim2.new(1, 0, 0, 0)}):Play()
+        end)
+        speedMain.Text = "移速增强"
         local speedSliderFrame = Instance.new("Frame")
-        speedSliderFrame.Size, speedSliderFrame.BackgroundTransparency, speedSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, meleeContainer
+        speedSliderFrame.Size, speedSliderFrame.BackgroundTransparency, speedSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, speedContainer
         local speedLabel = Instance.new("TextLabel")
-        speedLabel.Size, speedLabel.BackgroundTransparency, speedLabel.Text, speedLabel.TextColor3, speedLabel.TextSize, speedLabel.Font, speedLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "移速: " .. CFG.MELEE_LOOP_SPEED, Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
+        speedLabel.Size, speedLabel.BackgroundTransparency, speedLabel.Text, speedLabel.TextColor3, speedLabel.TextSize, speedLabel.Font, speedLabel.Parent = UDim2.new(0.4, 0, 1, 0), 1, "速度: " .. CFG.WALK_SPEED, Color3.new(1,1,1), 12, Enum.Font.Gotham, speedSliderFrame
         local speedBox = Instance.new("TextBox")
-        speedBox.Size, speedBox.Position, speedBox.BackgroundTransparency, speedBox.Text, speedBox.TextColor3, speedBox.TextSize, speedBox.Font, speedBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.MELEE_LOOP_SPEED), Color3.new(1,1,1), 8, Enum.Font.Gotham, speedSliderFrame
+        speedBox.Size, speedBox.Position, speedBox.BackgroundTransparency, speedBox.Text, speedBox.TextColor3, speedBox.TextSize, speedBox.Font, speedBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(CFG.WALK_SPEED), Color3.new(1,1,1), 8, Enum.Font.Gotham, speedSliderFrame
         table.insert(extraTextInputs, speedBox)
         speedBox.FocusLost:Connect(function()
             local val = tonumber(speedBox.Text)
             if val then
                 val = math.clamp(val, 16, 250)
-                CFG.MELEE_LOOP_SPEED = val
+                CFG.WALK_SPEED = val
                 speedBox.Text = tostring(val)
-                speedLabel.Text = "移速: " .. val
+                speedLabel.Text = "速度: " .. val
             else
-                speedBox.Text = tostring(CFG.MELEE_LOOP_SPEED)
+                speedBox.Text = tostring(CFG.WALK_SPEED)
             end
         end)
-    end
-    
-    if name == "Movement" then
-        -- 原移动选项卡内容（Speed增强等，此处保留空，因为移速已由近战模块控制，但为了UI完整仍创建）
-        local speedContainer = Instance.new("Frame")
-        speedContainer.Size, speedContainer.BackgroundTransparency, speedContainer.ClipsDescendants, speedContainer.Parent = UDim2.new(1, 0, 0, 0), 1, true, subScroll
-        Instance.new("UIListLayout", speedContainer).SortOrder = Enum.SortOrder.LayoutOrder
-        -- 原SDGT ELIT此处有Speed增强开关，但我们已经有了近战移速，为避免冲突，留空
     end
     
     if name == "Visuals" then
@@ -1168,17 +1270,51 @@ local function createSubWindow(name, items)
     end
     
     if name == "Player" then
-        -- 玩家选项卡：无敌碰飞 + 职业功能 + 地图功能
-        -- 无敌碰飞
+        -- 玩家选项卡：无敌碰飞、医生、工兵、牧师
         local wudiBtn = createFeatureButton(subScroll, "无敌碰飞", false, function()
             CFG.WUDI_FLY = not CFG.WUDI_FLY
         end)
         wudiBtn.Text = "无敌碰飞"
         
-        -- 以下职业功能和地图功能为原SDGT ELIT已有内容，因代码过长此处仅作占位，实际功能已在原脚本中实现
-        -- 为了完整性，添加占位按钮（实际功能需要时再补充，但用户要求不要动UI，所以这里先放空）
-        local placeholder = createFeatureButton(subScroll, "职业/地图功能", false, function() end)
-        placeholder.Text = "职业/地图功能(需另行添加)"
+        -- 医生
+        local doctorBtn = createFeatureButton(subScroll, "医生", false, function()
+            AutoRequestHealEnabled = not AutoRequestHealEnabled
+        end)
+        doctorBtn.Text = "医生"
+        local doctorSliderFrame = Instance.new("Frame")
+        doctorSliderFrame.Size, doctorSliderFrame.BackgroundTransparency, doctorSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, subScroll
+        local doctorLabel = Instance.new("TextLabel")
+        doctorLabel.Size, doctorLabel.BackgroundTransparency, doctorLabel.Text, doctorLabel.TextColor3, doctorLabel.TextSize, doctorLabel.Font, doctorLabel.Parent = UDim2.new(0.5, 0, 1, 0), 1, "阈值: " .. HealThreshold, Color3.new(1,1,1), 12, Enum.Font.Gotham, doctorSliderFrame
+        local doctorBox = Instance.new("TextBox")
+        doctorBox.Size, doctorBox.Position, doctorBox.BackgroundTransparency, doctorBox.Text, doctorBox.TextColor3, doctorBox.TextSize, doctorBox.Font, doctorBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(HealThreshold), Color3.new(1,1,1), 8, Enum.Font.Gotham, doctorSliderFrame
+        table.insert(extraTextInputs, doctorBox)
+        doctorBox.FocusLost:Connect(function()
+            local val = tonumber(doctorBox.Text)
+            if val then HealThreshold = math.clamp(val, 1, 100) doctorBox.Text = tostring(HealThreshold) doctorLabel.Text = "阈值: " .. HealThreshold end
+        end)
+        
+        -- 工兵
+        local sapperBtn = createFeatureButton(subScroll, "工兵", false, function()
+            AutoRepairEnabled = not AutoRepairEnabled
+        end)
+        sapperBtn.Text = "工兵"
+        
+        -- 牧师
+        local chaplainBtn = createFeatureButton(subScroll, "牧师", false, function()
+            AutoBlessEnabled = not AutoBlessEnabled
+        end)
+        chaplainBtn.Text = "牧师"
+        local blessSliderFrame = Instance.new("Frame")
+        blessSliderFrame.Size, blessSliderFrame.BackgroundTransparency, blessSliderFrame.Parent = UDim2.new(1, 0, 0, 25), 1, subScroll
+        local blessLabel = Instance.new("TextLabel")
+        blessLabel.Size, blessLabel.BackgroundTransparency, blessLabel.Text, blessLabel.TextColor3, blessLabel.TextSize, blessLabel.Font, blessLabel.Parent = UDim2.new(0.5, 0, 1, 0), 1, "感染阈值: " .. BlessThreshold, Color3.new(1,1,1), 12, Enum.Font.Gotham, blessSliderFrame
+        local blessBox = Instance.new("TextBox")
+        blessBox.Size, blessBox.Position, blessBox.BackgroundTransparency, blessBox.Text, blessBox.TextColor3, blessBox.TextSize, blessBox.Font, blessBox.Parent = UDim2.new(0.5, 0, 1, 0), UDim2.new(0.5, 0, 0, 0), 0.6, tostring(BlessThreshold), Color3.new(1,1,1), 8, Enum.Font.Gotham, blessSliderFrame
+        table.insert(extraTextInputs, blessBox)
+        blessBox.FocusLost:Connect(function()
+            local val = tonumber(blessBox.Text)
+            if val then BlessThreshold = math.clamp(val, 0, 200) blessBox.Text = tostring(BlessThreshold) blessLabel.Text = "感染阈值: " .. BlessThreshold end
+        end)
     end
     
     setupDraggableAndToggle(sub, subTitle, subScroll, false)
@@ -1317,7 +1453,7 @@ initResizeLogic()
 updateAllThemes()
 updateFontSizes()
 
--- 全局通知函数（占位）
+-- 全局通知函数
 _G.Library = { Notify = function(opt) pcall(function() warn("[Notify]", opt.Title, opt.Description) end) end }
 
-print("SDGT ELIT 完整整合版已加载（UI完全恢复，新增近战杀戮光环 + 无敌碰飞）")
+print("SDGT ELIT 最终版加载完成 | 近战杀戮光环（最快速度）| 无敌碰飞（自动吸附）| 医生/工兵/牧师 | 移速滑块")
