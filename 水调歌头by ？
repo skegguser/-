@@ -1,5 +1,5 @@
--- SDGT | 水调歌头
--- 基于 WindUI 的功能整合脚本
+-- SDGT | 水调歌头 (WindUI 完整整合版)
+-- 所有功能开关均带通知提醒
 
 loadstring(game:HttpGet('https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/main_example.lua'))()
 
@@ -25,6 +25,9 @@ lastAttackTime = 0
 currentTarget = nil
 currentRemote = nil
 currentConfig = nil
+LOOP_SPEED_VAL = 16
+FULL_BRIGHT_ON = false
+
 WEAPON_DB = {
     ["Stake"] = {range = 13, delay = 0.12, swing = "Over", mult = 12, path = "backpack"},
     ["Hand Axe"] = {range = 14, delay = 0.10, swing = "Over", mult = 12, path = "workspace"},
@@ -36,20 +39,22 @@ WEAPON_DB = {
     ["Spontoon"] = {range = 25, delay = 0.10, swing = "Thrust", mult = 12, path = "backpack"},
     ["Officer's Sabre"] = {range = 15, delay = 0.10, swing = "Thrust", mult = 15, path = "backpack"}
 }
+
 ELBOW_CONFIGS = {
     ["工兵斧"] = {weapon = "Axe", range = 14, delay = 0.10},
     ["卡宾枪"] = {weapon = "Carbine", range = 14, delay = 0.10}
 }
-LOOP_SPEED_VAL = 16
-FULL_BRIGHT_ON = false
+
 -- 透视相关
 activeStates = {}
 espHighlights = {}
 ALERT_RANGE = 20
+
 -- 飞行相关
 nowe = false
 speeds = 1
 tpwalking = false
+
 -- 其他功能标志
 noRecoilEnabled = false
 isAntiSelfDamage = false
@@ -208,7 +213,7 @@ local function attackElbow(target, weaponType, lastTime, delay)
     return now
 end
 
--- ESP创建（简化版）
+-- ESP创建
 local function createESP(model, color, label)
     if espHighlights[model] then return end
     local torso = model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
@@ -230,18 +235,14 @@ local Window = WindUI:CreateWindow({
     Title = "SDGT | 水调歌头",
     Icon = "sword",
     Theme = "Dark",
-    Size = UDim2.new(0, 500, 0, 400),
+    Size = UDim2.new(0, 550, 0, 450),
 })
 
 -- 功能选项卡
 local Tab_Main = Window:AddTab("功能", "home")
--- 杀戮光环选项卡
 local Tab_KillAura = Window:AddTab("杀戮光环", "sword")
--- 透视选项卡
 local Tab_ESP = Window:AddTab("透视", "eye")
--- 职业功能选项卡
 local Tab_Class = Window:AddTab("职业功能", "users")
--- 玩家功能选项卡
 local Tab_Player = Window:AddTab("玩家功能", "user")
 
 -- ==================== 功能选项卡内容 ====================
@@ -319,7 +320,7 @@ MainGroup:AddToggle({
                 return oldNamecall(self, ...)
             end)
         else
-            -- 恢复原钩子（简化处理，重新加载？这里略复杂，实际可保留但无影响）
+            -- 恢复原钩子（简化处理，实际可保留但无影响）
         end
     end
 })
@@ -749,7 +750,7 @@ ClassGroup:AddToggle({
                             if humanoid and humanoid.Health <= humanoid.MaxHealth * (HealThreshold/100) then
                                 local char = LP.Character
                                 if char and char:FindFirstChild("Medical Supplies") then
-                                    local remote = char.Medical Supplies:FindFirstChild("RemoteEvent")
+                                    local remote = char["Medical Supplies"]:FindFirstChild("RemoteEvent")
                                     if remote then
                                         pcall(function() remote:FireServer("SendRequest", humanoid) end)
                                     end
