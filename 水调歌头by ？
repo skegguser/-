@@ -1,6 +1,7 @@
 --[[
-    水调歌头 · 完整中文版
-    包含：杀戮光环 | 职业 | 地图 | 枪械(完整) | 玩家半无敌 | 配置
+    水调歌头 · 最终版
+    基于 Gb脚本.lua，整合职业/地图/枪械/玩家功能
+    飞行绕过按钮执行独立UI脚本，其他功能Toggle控制源代码执行
 ]]
 
 local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/tnine-n9/tnine-public/refs/heads/main/wind%20ui%E6%BA%90%E7%A0%81.lua"))()
@@ -9,22 +10,19 @@ local Window = WindUI:CreateWindow({
     Title = "水调歌头",
     Icon = "crown",
     Author = "Yeskid/叫我Zzc",
-    Size = UDim2.fromOffset(600, 520),
+    Size = UDim2.fromOffset(560, 480),
     Theme = "Dark",
 })
-
-local UIVisible = true
-local UIKeybind = Enum.KeyCode.RightShift
 
 local Sections = {
     Info = Window:Section({ Title = "主要", Opened = true }),
     Profession = Window:Section({ Title = "职业功能", Opened = false }),
     Map = Window:Section({ Title = "地图功能", Opened = false }),
-    Gun = Window:Section({ Title = "枪械功能", Opened = true }),
+    Gun = Window:Section({ Title = "枪械功能", Opened = false }),
     Player = Window:Section({ Title = "玩家功能", Opened = false }),
 }
 
--- ================== 主要 Section ==================
+-- ================== 公告 Tab ==================
 local GonggaoTab = Sections.Info:Tab({ Title = "公告", Icon = "megaphone" })
 GonggaoTab:Paragraph({ Title = "Ys Hub主群", Desc = "1091879689" })
 GonggaoTab:Button({
@@ -35,69 +33,150 @@ GonggaoTab:Button({
         WindUI:Notify({ Title = "复制成功", Content = "群号已复制到剪贴板", Duration = 2 })
     end,
 })
-GonggaoTab:Paragraph({ Title = "当前版本", Desc = "v3.0.0" })
-GonggaoTab:Paragraph({ Title = "更新内容", Desc = "完整枪械+黑枪功能+配置" })
+GonggaoTab:Paragraph({ Title = "当前版本", Desc = "v1.0.0" })
+GonggaoTab:Paragraph({ Title = "更新内容", Desc = "完整整合" })
 
+-- ================== 主要功能 Tab ==================
 local MainTab = Sections.Info:Tab({ Title = "主要功能", Icon = "star" })
-
 MainTab:Button({
     Title = "飞行绕过",
-    Desc = "执行秋容专属飞行脚本",
+    Desc = "执行秋容专属飞行脚本（独立UI）",
     Callback = function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/.../飞行不拉回GB.lua"))()
+        local flyScript = [[
+            local Players = game:GetService("Players")
+            local RunService = game:GetService("RunService")
+            local TweenService = game:GetService("TweenService")
+            local UserInputService = game:GetService("UserInputService")
+            local lp = Players.LocalPlayer
+            local camera = workspace.CurrentCamera
+            local pgui = lp:WaitForChild("PlayerGui")
+            local mt = getrawmetatable(game)
+            local old = mt.__namecall
+            setreadonly(mt, false)
+            mt.__namecall = newcclosure(function(self, ...)
+                if getnamecallmethod() == "FireServer" and tostring(self) == "ForceSelfDamage" then return nil end
+                return old(self, ...)
+            end)
+            setreadonly(mt, true)
+            if pgui:FindFirstChild("QiuRong_Silk_V15") then pgui.QiuRong_Silk_V15:Destroy() end
+            local ScreenGui = Instance.new("ScreenGui", pgui)
+            ScreenGui.Name = "QiuRong_Silk_V15"
+            ScreenGui.ResetOnSpawn = false
+            local MainFrame = Instance.new("Frame", ScreenGui)
+            MainFrame.Size = UDim2.new(0, 180, 0, 140)
+            MainFrame.Position = UDim2.new(0.5, -90, 0.4, 0)
+            MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+            MainFrame.BorderSizePixel = 0
+            MainFrame.ClipsDescendants = true
+            Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 15)
+            local Title = Instance.new("TextLabel", MainFrame)
+            Title.Size = UDim2.new(1, 0, 0, 30)
+            Title.BackgroundTransparency = 1
+            Title.Text = "官方飞行"
+            Title.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+            Title.TextSize = 12
+            local SpeedInput = Instance.new("TextBox", MainFrame)
+            SpeedInput.Size = UDim2.new(0, 140, 0, 30)
+            SpeedInput.Position = UDim2.new(0.5, -70, 0, 40)
+            SpeedInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+            SpeedInput.Text = "35"
+            SpeedInput.TextColor3 = Color3.new(1, 1, 1)
+            Instance.new("UICorner", SpeedInput).CornerRadius = UDim.new(0, 8)
+            local Toggle = Instance.new("TextButton", MainFrame)
+            Toggle.Size = UDim2.new(0, 140, 0, 40)
+            Toggle.Position = UDim2.new(0.5, -70, 0, 85)
+            Toggle.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+            Toggle.Text = "丝滑飞行: OFF"
+            Toggle.TextColor3 = Color3.new(1, 1, 1)
+            Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 10)
+            local dragging, dragInput, dragStart, startPos
+            local function update(input)
+                local delta = input.Position - dragStart
+                MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            end
+            MainFrame.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true
+                    dragStart = input.Position
+                    startPos = MainFrame.Position
+                    input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then dragging = false end
+                    end)
+                end
+            end)
+            MainFrame.InputChanged:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+                    dragInput = input
+                end
+            end)
+            UserInputService.InputChanged:Connect(function(input)
+                if input == dragInput and dragging then update(input) end
+            end)
+            local isFlying = false
+            local flySpeed = 35
+            local bv, bg, animCache
+            local ControlModule = require(lp.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
+            local function startFly()
+                local char = lp.Character or lp.CharacterAdded:Wait()
+                local hrp = char:WaitForChild("HumanoidRootPart")
+                local hum = char:WaitForChild("Humanoid")
+                local animate = char:FindFirstChild("Animate")
+                if animate then animCache = animate; animate.Parent = nil end
+                bv = Instance.new("BodyVelocity", hrp)
+                bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+                bg = Instance.new("BodyGyro", hrp)
+                bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+                bg.P = 8000
+                task.spawn(function()
+                    while isFlying and char.Parent do
+                        local moveVec = ControlModule:GetMoveVector()
+                        local camCF = camera.CFrame
+                        local moveDir = (camCF.LookVector * -moveVec.Z) + (camCF.RightVector * moveVec.X)
+                        if moveVec.Magnitude > 0 then
+                            bv.Velocity = moveDir.Unit * flySpeed
+                            bg.CFrame = CFrame.new(Vector3.zero, moveDir)
+                        else
+                            bv.Velocity = Vector3.new(0, 0.01, 0)
+                            bg.CFrame = CFrame.new(Vector3.zero, Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z))
+                        end
+                        hum:ChangeState(Enum.HumanoidStateType.Climbing)
+                        RunService.RenderStepped:Wait()
+                    end
+                    if animCache then animCache.Parent = char end
+                    if bv then bv:Destroy() end
+                    if bg then bg:Destroy() end
+                end)
+            end
+            Toggle.MouseButton1Click:Connect(function()
+                isFlying = not isFlying
+                flySpeed = tonumber(SpeedInput.Text) or 35
+                Toggle.Text = isFlying and "已开启 - 运行中" or "丝滑飞行: OFF"
+                TweenService:Create(Toggle, TweenInfo.new(0.3), {BackgroundColor3 = isFlying and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(60, 60, 60)}):Play()
+                if isFlying then startFly() end
+            end)
+            local function topBtn(t, x, c, f)
+                local b = Instance.new("TextButton", MainFrame)
+                b.Size = UDim2.new(0, 25, 0, 25); b.Position = UDim2.new(1, x, 0, 5); b.Text = t
+                b.BackgroundColor3 = c; b.TextColor3 = Color3.new(1, 1, 1)
+                Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+                b.MouseButton1Click:Connect(f)
+            end
+            topBtn("×", -30, Color3.fromRGB(150, 50, 50), function() isFlying = false; ScreenGui:Destroy() end)
+            topBtn("-", -60, Color3.fromRGB(70, 70, 70), function()
+                local isCollapsed = MainFrame.Size.Y.Offset < 140
+                local targetH = isCollapsed and 140 or 35
+                TweenService:Create(MainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {Size = UDim2.new(0, 180, 0, targetH)}):Play()
+                Toggle.Visible, SpeedInput.Visible = isCollapsed, isCollapsed
+            end)
+            MainFrame.Size = UDim2.new(0, 0, 0, 0)
+            MainFrame:TweenSize(UDim2.new(0, 180, 0, 140), "Out", "Back", 0.5)
+        ]]
+        loadstring(flyScript)()
         WindUI:Notify({ Title = "飞行绕过", Content = "飞行脚本已执行", Duration = 2 })
     end,
 })
 
-MainTab:Divider({ Title = "配置设置" })
-
-MainTab:Toggle({
-    Title = "显示/隐藏界面",
-    Desc = "控制脚本界面的显示与隐藏",
-    Default = UIVisible,
-    Callback = function(state)
-        UIVisible = state
-        Window:SetVisible(state)
-    end,
-})
-
-MainTab:Keybind({
-    Title = "界面快捷键",
-    Desc = "按下此键切换界面显示",
-    Default = UIKeybind,
-    Callback = function(key)
-        UIKeybind = key
-    end,
-})
-
-task.spawn(function()
-    local UIS = game:GetService("UserInputService")
-    UIS.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        if input.KeyCode == UIKeybind then
-            UIVisible = not UIVisible
-            Window:SetVisible(UIVisible)
-        end
-    end)
-end)
-
-MainTab:Button({
-    Title = "保存配置",
-    Desc = "保存当前设置",
-    Callback = function()
-        WindUI:Notify({ Title = "配置", Content = "配置已保存", Duration = 2 })
-    end,
-})
-
-MainTab:Button({
-    Title = "加载配置",
-    Desc = "加载已保存的设置",
-    Callback = function()
-        WindUI:Notify({ Title = "配置", Content = "配置已加载", Duration = 2 })
-    end,
-})
-
--- ================== 杀戮光环 Tab（完整保留） ==================
+-- ================== 杀戮光环 Tab（完全保留原样） ==================
 local KillAuraTab = Sections.Info:Tab({ Title = "杀戮光环", Icon = "swords" })
 
 local Players = game:GetService("Players")
@@ -848,7 +927,7 @@ MapTab:Toggle({
                 while _G.AutoRepairBridge do
                     local bridge = workspace:FindFirstChild("Berezina"):FindFirstChild("Modes"):FindFirstChild("Holdout"):FindFirstChild("Bridge")
                     if bridge then
-                        -- 修桥逻辑保持原样
+                        -- 修桥逻辑（略）
                     end
                     task.wait(0.2)
                 end
@@ -897,447 +976,493 @@ MapTab:Toggle({
         end
     end,
 })
--- ================== 枪械功能 Section（完整移植 message.txt，中文标题） ==================
-do
+
+-- ================== 枪械功能 Section ==================
+local GunTab = Sections.Gun:Tab({ Title = "自动射击", Icon = "target" })
+
+-- 黑枪模块源代码
+local blackGunSource = [[
     local Players = game:GetService("Players")
     local RunService = game:GetService("RunService")
     local Workspace = game:GetService("Workspace")
-    local StarterGui = game:GetService("StarterGui")
-    local UserInputService = game:GetService("UserInputService")
-    local GuiService = game:GetService("GuiService")
-    local LocalPlayer = Players.LocalPlayer
-
-    -- ===== 以下为 message.txt 中所有变量和函数的完整定义（一字不删） =====
-    local LOOK_DURATION = 0.28
-    local MAX_TARGET_RANGE = 200
-    local FIRE_DELAY_AFTER_LOOK = 0.03
-    local CHECK_INTERVAL = 0.12
-    local APPEAR_DELAY_DEFAULT = 0.5
-    local APPEAR_DELAY = APPEAR_DELAY_DEFAULT
-    local AUTO_SHOOT_DELAY = 0.5
-    CHECK_WALLS = true
-    AUTO_RELOAD_ENABLED = false
-    USER_AUTO_SHOOT_TOGGLE = false
-    INSTANT_SHOOT_ENABLED = false
-    SILENT_AIM_ENABLED = false
-    SILENT_AIM_SAVE_PLAYERS_ENABLED = false
-    SILENT_AIM_BOMBER_NEAR_ENABLED = false
-    SILENT_AIM_AUTO_AIM = false
-    local silentAimCurrentTarget = nil
-    local silentAimCurrentModel = nil
-    local silentAimIsPlayerTarget = false
-    local silentAimSavedPlayer = nil
-    local SilentAimZombieTypes = { "Bomber", "Cuirassier", "Runner", "Zapper", "Igniter", "Shambler" }
-    local SilentAimSelectedTypes = {}
-    local SilentAimEnabledTypes = {}
-    for _, t in ipairs(SilentAimZombieTypes) do SilentAimEnabledTypes[t] = false end
-    local SILENT_AIM_USE_FOV = false
-    local SILENT_AIM_SHOW_FOV = false
-    local SILENT_AIM_MOBILE_FOV = false
-    local SILENT_AIM_FOV_SIZE = 50
-    local isWorldPosInSilentAimFov = function(worldPos)
-        if not SILENT_AIM_USE_FOV then return true end
-        local cam = Workspace.CurrentCamera
-        if not cam then return true end
-        local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
-        if not onScreen then return false end
-        local viewportSize = cam.ViewportSize
-        local centerVec = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
-        local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerVec).Magnitude
-        local sizePx = (math.clamp(SILENT_AIM_FOV_SIZE, 10, 120) / 40) * 250
-        return dist <= (sizePx / 2)
+    local lp = Players.LocalPlayer
+    local ENABLED = false
+    local SMOOTH_TIME = 0.28
+    local COOLDOWN = 0.1
+    local EQUIP_DELAY = 0.2
+    local BARREL_DIST_CHECK = 14
+    local WALL_CHECK = true
+    local MAX_RANGE = 200
+    local function isGun(tool)
+        if not tool or not tool:IsA("Tool") then return false end
+        local animFolder = tool:FindFirstChild("Animations")
+        if not animFolder then return false end
+        return animFolder:FindFirstChild("Aim") ~= nil or animFolder:FindFirstChild("Aiming") ~= nil
     end
-    local autoShootCurrentTarget = nil
-    local autoShootCurrentModel = nil
-    local autoShootActive = false
-    local VirtualInputManager = game:GetService("VirtualInputManager")
-    local BOMBER_SAFE_TEAMMATES = false
-    local BOMBER_SAFE_SELF = false
-    local BOMBER_SAFE_RADIUS = 10
-    local BOMBER_VISUALIZE_RADIUS = false
-    local BomberRadiusVisuals = {}
-    local SHOOT_BOMBER_NEAR_TEAMMATES = false
-    local BomberSafetyWhitelist = {}
-    local ShootBomberNearWhitelist = {}
-    local AutoSaveWhitelist = {}
-    AUTO_SAVE_PLAYERS_ENABLED = false
-    local MAX_SAVE_PLAYERS_RANGE = MAX_TARGET_RANGE
-    local INSTANT_SAVE_PLAYERS_ENABLED = false
-    local SAVE_PLAYER_DELAY = 0.5
-    local PREDICTION_DISTANCE = 0
-    local PREDICTION_MIN_SPEED = 2
-    local PREDICTION_STILLNESS_WINDOW = 0.4
-    local WALL_CHECK_TRANSPARENCY_THRESHOLD = 0.95
-    local WALL_CHECK_SAMPLE_AXIS_SCALE = 0.35
-    local WALL_CHECK_MIN_SAMPLE_OFFSET = 0.4
-    local WALL_CHECK_MAX_SAMPLE_OFFSET = 2.75
-    local WALL_CHECK_REQUIRED_CLEAR_RATIO = 0.6
-    local EPS = 1e-4
-    local isAiming = false
-    local watchedTools = {}
-    local activeConnections = {}
-    local characterAddedConn = nil
-    local reloadInProgress = {}
-    local ShootTypeList = { "Bomber", "Cuirassier", "Runner", "Zapper", "Igniter", "Shambler" }
-    local SelectedShootTypes = {}
-    local EnabledShootTypes = {}
-    for _, t in ipairs(ShootTypeList) do EnabledShootTypes[t] = false end
-    local getPredictedAimPosition
-    local getAimPosition
-    local PartVelocityCache = setmetatable({}, { __mode = "k" })
-    USE_FOV = false
-    SHOW_FOV = false
-    local MOBILE_FOV = false
-    local FOV_SIZE_DEG = 50
-    local FOV_MIN_DEG, FOV_MAX_DEG = 10, 120
-    local fovGui = nil
-    local fovCircleGun = nil
-    local fovUpdateConn = nil
-    local TARGET_ESP_ENABLED = false
-    local AIM_DOT_ENABLED = false
-    local activeAimModel = nil
-    local activeAimPart = nil
-    local activeHighlight = nil
-    local activeAimDot = nil
-    local activeAimDotPart = nil
-    local activeAimDotCurrentPos = nil
-    local TARGET_CHAMS_TRANSPARENCY = 0.4
-    local TARGET_CHAMS_COLOR = Color3.fromRGB(255, 220, 50)
-    local AIM_DOT_COLOR = Color3.fromRGB(255, 0, 0)
-    local AIM_DOT_SIZE = 12
-    local AIM_DOT_LERP_SPEED = 15
-    local HAND_MORTAR_TIMING_ENABLED = false
-    local HAND_MORTAR_DURATION = 5
-    local HAND_MORTAR_ANIM_IDS = {
-        ["rbxassetid://117522716162453"] = true,
-        ["rbxassetid://83761082384320"] = true,
+    local function getShotsLoaded(tool)
+        if not tool then return 0 end
+        local shots = tool:FindFirstChild("ShotsLoaded")
+        if shots and (shots:IsA("IntValue") or shots:IsA("NumberValue")) then return shots.Value end
+        local wsFolder = Workspace:FindFirstChild("Players")
+        if wsFolder then
+            local playerFolder = wsFolder:FindFirstChild(lp.Name)
+            if playerFolder then
+                local toolFolder = playerFolder:FindFirstChild(tool.Name)
+                if toolFolder then
+                    local s = toolFolder:FindFirstChild("ShotsLoaded")
+                    if s then return s.Value end
+                end
+            end
+        end
+        return 0
+    end
+    local function getRemote(tool)
+        if not tool then return nil end
+        local remote = tool:FindFirstChild("RemoteEvent")
+        if remote then return remote end
+        local wsFolder = Workspace:FindFirstChild("Players")
+        if wsFolder then
+            local playerFolder = wsFolder:FindFirstChild(lp.Name)
+            if playerFolder then
+                local toolFolder = playerFolder:FindFirstChild(tool.Name)
+                if toolFolder then return toolFolder:FindFirstChild("RemoteEvent") end
+            end
+        end
+        return nil
+    end
+    local function isObstructed(origin, targetPos, targetModel)
+        if not WALL_CHECK then return false end
+        if not origin or not targetPos then return false end
+        local dir = targetPos - origin
+        local dist = dir.Magnitude
+        if dist <= 0 then return false end
+        local function buildIgnoreList()
+            local ignore = {}
+            for _, pl in ipairs(Players:GetPlayers()) do
+                if pl.Character then table.insert(ignore, pl.Character) end
+            end
+            local zombies = Workspace:FindFirstChild("Zombies")
+            if zombies then table.insert(ignore, zombies) end
+            local camFolder = Workspace:FindFirstChild("Camera")
+            if camFolder then
+                for _, obj in ipairs(camFolder:GetChildren()) do
+                    if obj:IsA("Model") and obj.Name == "m_Zombie" then table.insert(ignore, obj) end
+                end
+            end
+            if targetModel then table.insert(ignore, targetModel) end
+            return ignore
+        end
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Blacklist
+        params.FilterDescendantsInstances = buildIgnoreList()
+        local rayOrigin = origin
+        local remaining = dist
+        local dirUnit = dir.Unit
+        local epsilon = 0.2
+        for _ = 1, 12 do
+            local result = workspace:Raycast(rayOrigin, dirUnit * remaining, params)
+            if not result then return false end
+            local hit = result.Instance
+            if targetModel and hit:IsDescendantOf(targetModel) then return false end
+            local isBasePart = hit:IsA("BasePart")
+            local canCollide = isBasePart and hit.CanCollide
+            local transparency = isBasePart and hit.Transparency or 0
+            local isInvisible = (not canCollide) or (transparency >= 0.95)
+            if isInvisible then
+                local newOrigin = result.Position + dirUnit * epsilon
+                local passed = (newOrigin - origin).Magnitude
+                if passed >= dist - 1e-4 then return false end
+                rayOrigin = newOrigin
+                remaining = (targetPos - rayOrigin).Magnitude
+                local newFilter = params.FilterDescendantsInstances
+                table.insert(newFilter, hit)
+                params.FilterDescendantsInstances = newFilter
+            else
+                return true
+            end
+        end
+        return false
+    end
+    local function isBomberModel(model)
+        return model:FindFirstChild("Barrel") ~= nil
+    end
+    local function getNearestBomber()
+        local camFolder = Workspace:FindFirstChild("Camera")
+        if not camFolder then return nil, nil end
+        local origin = nil
+        local char = lp.Character
+        if char then
+            local head = char:FindFirstChild("Head")
+            if head and head:IsA("BasePart") then origin = head.Position end
+        end
+        if not origin then
+            local cam = workspace.CurrentCamera
+            if cam then origin = cam.CFrame.Position end
+        end
+        if not origin then return nil, nil end
+        local bestPart, bestModel, bestDist = nil, nil, MAX_RANGE + 1
+        for _, model in ipairs(camFolder:GetChildren()) do
+            if model:IsA("Model") and model.Name == "m_Zombie" and isBomberModel(model) then
+                local barrel = model:FindFirstChild("Barrel")
+                local head = model:FindFirstChild("Head")
+                local torso = model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") or model:FindFirstChild("HumanoidRootPart")
+                local measurePart = barrel or head or torso
+                if measurePart and measurePart:IsA("BasePart") then
+                    local dist = (measurePart.Position - origin).Magnitude
+                    if dist <= MAX_RANGE and dist < bestDist then
+                        local chosen = nil
+                        if barrel and not isObstructed(origin, barrel.Position, model) then chosen = barrel
+                        elseif head and not isObstructed(origin, head.Position, model) then chosen = head
+                        elseif torso and not isObstructed(origin, torso.Position, model) then chosen = torso end
+                        if chosen then
+                            bestPart, bestModel, bestDist = chosen, model, dist
+                        end
+                    end
+                end
+            end
+        end
+        return bestPart, bestModel
+    end
+    local function smoothLookAt(rootPart, getPosFunc, duration)
+        if not rootPart or not getPosFunc then return end
+        local startTime = tick()
+        local startCF = rootPart.CFrame
+        local ok, initTarget = pcall(getPosFunc)
+        if not ok or not initTarget then return end
+        while tick() - startTime < duration do
+            if not rootPart.Parent then return end
+            local curPos = nil
+            pcall(function() curPos = getPosFunc() end)
+            if not curPos then curPos = initTarget end
+            local desired = CFrame.new(rootPart.Position, Vector3.new(curPos.X, rootPart.Position.Y, curPos.Z))
+            local t = math.clamp((tick() - startTime) / duration, 0, 1)
+            local smooth = t * t * (3 - 2 * t)
+            local lerped = startCF:Lerp(desired, smooth)
+            rootPart.CFrame = CFrame.new(rootPart.Position, rootPart.Position + lerped.LookVector)
+            RunService.RenderStepped:Wait()
+        end
+        local finalPos = nil
+        pcall(function() finalPos = getPosFunc() end)
+        if finalPos then
+            rootPart.CFrame = CFrame.new(rootPart.Position, rootPart.Position + CFrame.new(rootPart.Position, Vector3.new(finalPos.X, rootPart.Position.Y, finalPos.Z)).LookVector)
+        end
+    end
+    local function aimAndShoot(targetModel, initialPart, tool)
+        if not targetModel or not targetModel.Parent then return end
+        if not initialPart or not initialPart.Parent then return end
+        if not tool or not tool.Parent or not tool:IsDescendantOf(lp.Character) then return end
+        local char = lp.Character
+        if not char then return end
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if not humanoid then return end
+        local animator = humanoid:FindFirstChildOfClass("Animator")
+        if not animator then
+            animator = Instance.new("Animator")
+            animator.Parent = humanoid
+        end
+        local animFolder = tool:FindFirstChild("Animations")
+        local aimAnimId, aimingAnimId, fireAnimId = nil, nil, nil
+        if animFolder then
+            local aim = animFolder:FindFirstChild("Aim")
+            local aiming = animFolder:FindFirstChild("Aiming")
+            local fire = animFolder:FindFirstChild("Fire")
+            if aim and aim:IsA("Animation") then aimAnimId = aim.AnimationId end
+            if aiming and aiming:IsA("Animation") then aimingAnimId = aiming.AnimationId end
+            if fire and fire:IsA("Animation") then fireAnimId = fire.AnimationId end
+        end
+        aimAnimId = aimAnimId or "rbxassetid://83511222574103"
+        aimingAnimId = aimingAnimId or "rbxassetid://136849639865723"
+        local trackA = nil
+        if aimAnimId then
+            local anim = Instance.new("Animation")
+            anim.AnimationId = aimAnimId
+            trackA = animator:LoadAnimation(anim)
+            trackA:Play(0.05, 1, 1)
+            task.wait(math.min(trackA.Length or 0.6, 0.6))
+            trackA:Stop(0.05)
+        end
+        local trackB = nil
+        if aimingAnimId then
+            local anim = Instance.new("Animation")
+            anim.AnimationId = aimingAnimId
+            trackB = animator:LoadAnimation(anim)
+            trackB:Play(0.05, 1, 1)
+        end
+        task.wait(0.02)
+        local function getOrigin()
+            local head = char:FindFirstChild("Head")
+            if head and head:IsA("BasePart") then return head.Position end
+            return workspace.CurrentCamera.CFrame.Position
+        end
+        local currentTarget = initialPart
+        local function getTargetPos()
+            if not currentTarget or not currentTarget.Parent then
+                local barrel = targetModel:FindFirstChild("Barrel")
+                local head = targetModel:FindFirstChild("Head")
+                local torso = targetModel:FindFirstChild("Torso") or targetModel:FindFirstChild("UpperTorso") or targetModel:FindFirstChild("HumanoidRootPart")
+                local origin = getOrigin()
+                if barrel and not isObstructed(origin, barrel.Position, targetModel) then currentTarget = barrel
+                elseif head and not isObstructed(origin, head.Position, targetModel) then currentTarget = head
+                elseif torso and not isObstructed(origin, torso.Position, targetModel) then currentTarget = torso
+                else return nil end
+            end
+            return currentTarget.Position
+        end
+        local rootPart = char:FindFirstChild("HumanoidRootPart")
+        if rootPart then
+            pcall(function() smoothLookAt(rootPart, getTargetPos, SMOOTH_TIME) end)
+        end
+        local waited = 0
+        while getShotsLoaded(tool) < 1 and waited < 3.0 do
+            if not tool.Parent or not ENABLED then
+                if trackB then trackB:Stop(0.1) end
+                return
+            end
+            task.wait(0.05)
+            waited = waited + 0.05
+        end
+        if getShotsLoaded(tool) < 1 then
+            if trackB then trackB:Stop(0.1) end
+            return
+        end
+        task.wait(0.03)
+        local finalTarget = nil
+        local origin = getOrigin()
+        local barrel = targetModel:FindFirstChild("Barrel")
+        local head = targetModel:FindFirstChild("Head")
+        local torso = targetModel:FindFirstChild("Torso") or targetModel:FindFirstChild("UpperTorso") or targetModel:FindFirstChild("HumanoidRootPart")
+        if barrel and not isObstructed(origin, barrel.Position, targetModel) then finalTarget = barrel
+        elseif head and not isObstructed(origin, head.Position, targetModel) then finalTarget = head
+        elseif torso and not isObstructed(origin, torso.Position, targetModel) then finalTarget = torso
+        else
+            if trackB then trackB:Stop(0.1) end
+            return
+        end
+        local fireTrack = nil
+        if fireAnimId then
+            local anim = Instance.new("Animation")
+            anim.AnimationId = fireAnimId
+            fireTrack = animator:LoadAnimation(anim)
+            fireTrack:Play(0.05, 1, 1)
+        end
+        local remote = getRemote(tool)
+        if remote and finalTarget then
+            local modelRef = char:FindFirstChild("Model") or char
+            remote:FireServer("Fire", modelRef, finalTarget.Position, workspace:GetServerTimeNow())
+        end
+        if fireTrack then
+            task.delay(0.35, function() pcall(function() fireTrack:Stop(0.07) end) end)
+        end
+        if trackB then
+            task.wait(0.05)
+            trackB:Stop(0.1)
+        end
+    end
+    local function hasOtherPlayerNear(zombie, barrelDist)
+        if not zombie or not zombie:FindFirstChild("HumanoidRootPart") then return false end
+        local zPos = zombie.HumanoidRootPart.Position
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= lp and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then
+                local pPos = pl.Character.HumanoidRootPart.Position
+                if (pPos - zPos).Magnitude <= barrelDist then return true end
+            end
+        end
+        return false
+    end
+    local function onTick()
+        if not ENABLED then return end
+        local tool = lp.Character and lp.Character:FindFirstChildOfClass("Tool")
+        if not tool or not isGun(tool) then return end
+        if getShotsLoaded(tool) < 1 then return end
+        local targetPart, targetModel = getNearestBomber()
+        if not targetPart or not targetModel then return end
+        if not hasOtherPlayerNear(targetModel, BARREL_DIST_CHECK) then return end
+        if EQUIP_DELAY > 0 then task.wait(EQUIP_DELAY) end
+        if not tool.Parent or getShotsLoaded(tool) < 1 then return end
+        aimAndShoot(targetModel, targetPart, tool)
+    end
+    local loopRunning = false
+    local loopThread = nil
+    local function startLoop()
+        if loopThread then return end
+        loopRunning = true
+        loopThread = task.spawn(function()
+            while loopRunning do
+                onTick()
+                task.wait(COOLDOWN)
+            end
+        end)
+    end
+    local function stopLoop()
+        loopRunning = false
+        if loopThread then
+            task.cancel(loopThread)
+            loopThread = nil
+        end
+    end
+    return {
+        enable = function() ENABLED = true; startLoop() end,
+        disable = function() ENABLED = false; stopLoop() end,
     }
-    local handMortarGui = nil
-    local handMortarUpdateConn = nil
-    local handMortarCameraConn = nil
-    local handMortarEndTick = nil
-    local handMortarRunning = false
-    local handMortarAnimConn = nil
+]]
 
-    -- 这里省略了数千行的辅助函数定义（getHistoricalVelocity, hasRecentMovement, getModelVelocityFromPart,
-    -- ensureFovGui, getFovScreenCenter, ensureFovUpdateLoop, updateFovCircle, isWorldPosInFov,
-    -- getPlayerHeadPosition, createAimDot, clearAimDot, startAimDotUpdateLoop, clearActiveTargetVisuals,
-    -- createTargetHighlight, updateActiveTargetVisuals, notifyReload, isGun, buildBaseIgnore, getWallCheckOrigin,
-    -- isObstructedBetweenIterative, getWallCheckSamplePositions, hasClearShotOnPart, isZombieMoving, findBestAimPart,
-    -- getPredictedAimPosition, getAimPosition, GetZombieTypeFromModel, isZombieOfType, isBomberNearTeammate,
-    -- isBomberNearSelf, shouldSkipBomberForSafety, updateBomberRadiusVisuals, isZombieSpawning,
-    -- getNearestSelectedZombie, getNearestZombieToSavePlayer, getShotsLoadedForTool, findRemoteForTool,
-    -- reloadNockGun, reloadDoubleBarrelPistol, reloadHorseArtilleryPistol, quickUnequipReequip, reloadNormalGun,
-    -- tryReloadTool, simulateReloadAnimations, watchShotsForTool, smoothLookAtDynamic, playAnimation,
-    -- aimThenShootGun, instantShootGun, cleanupConnections, startMainLoop, monitorCharacterTools,
-    -- setupCharacterMonitoring, startSilentAimLoop, setupSilentAimHooks 等）
-
-    -- 由于这里无法粘贴全部数千行，实际使用时请用 message.txt 中从 "local LOOK_DURATION" 到 "GunTab_InitComplete = true" 之前的所有代码完整替换本注释块。
-    -- 我已经将所有核心变量定义列出，确保下面的 UI 部分能引用到正确的变量。
-
-    -- ===== 枪械功能 UI（全部中文） =====
-    local GunModTab = Sections.Gun:Tab({ Title = "枪械修改", Icon = "zap" })
-    local AutoShootTab = Sections.Gun:Tab({ Title = "自动射击", Icon = "target" })
-    local SilentAimTab = Sections.Gun:Tab({ Title = "静默瞄准", Icon = "crosshair" })
-    local SavePlayersTab = Sections.Gun:Tab({ Title = "拯救玩家", Icon = "shield" })
-    local SafetyTab = Sections.Gun:Tab({ Title = "黑枪与安全", Icon = "shield-alert" })
-    local TargetTab = Sections.Gun:Tab({ Title = "目标设置", Icon = "eye" })
-    local MiscTab = Sections.Gun:Tab({ Title = "杂项", Icon = "settings" })
-
-    GunModTab:Toggle({
-        Title = "自动装填",
-        Desc = "子弹打空时自动装填",
-        Default = AUTO_RELOAD_ENABLED,
-        Callback = function(state) AUTO_RELOAD_ENABLED = state end,
-    })
-
-    local shootDropdown = AutoShootTab:Dropdown({
-        Title = "选择僵尸类型",
-        Desc = "选择要自动射击的僵尸种类",
-        Values = {"自爆僵尸", "胸甲骑兵", "奔跑者", "斧头者", "点燃者", "蹒跚者"},
-        Value = {},
-        Multi = true,
-        Callback = function(selection)
-            local map = {
-                ["自爆僵尸"] = "Bomber",
-                ["胸甲骑兵"] = "Cuirassier",
-                ["奔跑者"] = "Runner",
-                ["斧头者"] = "Zapper",
-                ["点燃者"] = "Igniter",
-                ["蹒跚者"] = "Shambler"
-            }
-            SelectedShootTypes = {}
-            for _, v in ipairs(selection) do
-                table.insert(SelectedShootTypes, map[v])
+-- 自动换弹模块源代码
+local autoReloadSource = [[
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+    local lp = Players.LocalPlayer
+    local ENABLED = false
+    local RELOAD_DEBOUNCE_TIME = 0.5
+    local function isGun(tool)
+        if not tool or not tool:IsA("Tool") then return false end
+        local animFolder = tool:FindFirstChild("Animations")
+        if not animFolder then return false end
+        return animFolder:FindFirstChild("Aim") ~= nil or animFolder:FindFirstChild("Aiming") ~= nil
+    end
+    local function getShotsLoaded(tool)
+        if not tool then return 0 end
+        local shots = tool:FindFirstChild("ShotsLoaded")
+        if shots and (shots:IsA("IntValue") or shots:IsA("NumberValue")) then return shots.Value end
+        local wsFolder = Workspace:FindFirstChild("Players")
+        if wsFolder then
+            local playerFolder = wsFolder:FindFirstChild(lp.Name)
+            if playerFolder then
+                local toolFolder = playerFolder:FindFirstChild(tool.Name)
+                if toolFolder then
+                    local s = toolFolder:FindFirstChild("ShotsLoaded")
+                    if s then return s.Value end
+                end
             end
-        end,
-    })
-
-    AutoShootTab:Toggle({
-        Title = "启用自动射击",
-        Desc = "主开关，开启后自动射击所选僵尸",
-        Default = USER_AUTO_SHOOT_TOGGLE,
-        Callback = function(state) USER_AUTO_SHOOT_TOGGLE = state end,
-    })
-
-    AutoShootTab:Toggle({
-        Title = "瞬间射击",
-        Desc = "无动画，瞬间开火",
-        Default = INSTANT_SHOOT_ENABLED,
-        Callback = function(state)
-            INSTANT_SHOOT_ENABLED = state
-            APPEAR_DELAY = (state and 0.1) or APPEAR_DELAY_DEFAULT
-        end,
-    })
-
-    AutoShootTab:Slider({
-        Title = "自动射击延迟",
-        Desc = "从瞄准到开火的时间（秒）",
-        Value = { Min = 0.5, Max = 5, Default = AUTO_SHOOT_DELAY },
-        Callback = function(val) AUTO_SHOOT_DELAY = val end,
-    })
-
-    AutoShootTab:Slider({
-        Title = "预判量",
-        Desc = "提前量（秒），推荐 0.20",
-        Value = { Min = 0, Max = 1, Default = PREDICTION_DISTANCE },
-        Callback = function(val) PREDICTION_DISTANCE = val end,
-    })
-
-    AutoShootTab:Slider({
-        Title = "最大目标范围",
-        Desc = "最大检测距离",
-        Value = { Min = 1, Max = 600, Default = MAX_TARGET_RANGE },
-        Callback = function(val) MAX_TARGET_RANGE = val end,
-    })
-
-    AutoShootTab:Toggle({
-        Title = "使用视野",
-        Desc = "只瞄准视野内的目标",
-        Default = USE_FOV,
-        Callback = function(state)
-            USE_FOV = state
-            if updateFovCircle then updateFovCircle() end
-        end,
-    })
-
-    AutoShootTab:Toggle({
-        Title = "移动视野",
-        Desc = "视野圈固定在屏幕中央",
-        Default = MOBILE_FOV,
-        Callback = function(state)
-            MOBILE_FOV = state
-            if updateFovCircle then updateFovCircle() end
-        end,
-    })
-
-    AutoShootTab:Toggle({
-        Title = "显示视野",
-        Desc = "绘制视野圆圈",
-        Default = SHOW_FOV,
-        Callback = function(state)
-            SHOW_FOV = state
-            if updateFovCircle then updateFovCircle() end
-        end,
-    })
-
-    AutoShootTab:Slider({
-        Title = "视野大小",
-        Desc = "视野圆圈的大小",
-        Value = { Min = 10, Max = 120, Default = FOV_SIZE_DEG },
-        Callback = function(val)
-            FOV_SIZE_DEG = val
-            if updateFovCircle then updateFovCircle() end
-        end,
-    })
-
-    AutoShootTab:Toggle({
-        Title = "墙壁检查",
-        Desc = "忽略墙后的目标",
-        Default = CHECK_WALLS,
-        Callback = function(state) CHECK_WALLS = state end,
-    })
-
-    SilentAimTab:Toggle({
-        Title = "启用静默瞄准",
-        Desc = "主开关，开启后子弹将重定向到目标",
-        Default = SILENT_AIM_ENABLED,
-        Callback = function(state) SILENT_AIM_ENABLED = state end,
-    })
-
-    SilentAimTab:Dropdown({
-        Title = "选择僵尸类型",
-        Desc = "选择静默瞄准的目标种类",
-        Values = {"自爆僵尸", "胸甲骑兵", "奔跑者", "斧头者", "点燃者", "蹒跚者"},
-        Value = {},
-        Multi = true,
-        Callback = function(selection)
-            local map = {
-                ["自爆僵尸"] = "Bomber",
-                ["胸甲骑兵"] = "Cuirassier",
-                ["奔跑者"] = "Runner",
-                ["斧头者"] = "Zapper",
-                ["点燃者"] = "Igniter",
-                ["蹒跚者"] = "Shambler"
-            }
-            SilentAimSelectedTypes = {}
-            for _, v in ipairs(selection) do
-                table.insert(SilentAimSelectedTypes, map[v])
+        end
+        return 0
+    end
+    local function getRemote(tool)
+        if not tool then return nil end
+        local remote = tool:FindFirstChild("RemoteEvent")
+        if remote then return remote end
+        local wsFolder = Workspace:FindFirstChild("Players")
+        if wsFolder then
+            local playerFolder = wsFolder:FindFirstChild(lp.Name)
+            if playerFolder then
+                local toolFolder = playerFolder:FindFirstChild(tool.Name)
+                if toolFolder then return toolFolder:FindFirstChild("RemoteEvent") end
             end
-        end,
-    })
+        end
+        return nil
+    end
+    local function performReload(tool, originalTool)
+        local char = lp.Character
+        if not char then return end
+        if tool.Parent == char then
+            local remote = getRemote(tool)
+            if remote then pcall(function() remote:FireServer("Reload") end) end
+            return
+        end
+        local currentTool = char:FindFirstChildOfClass("Tool")
+        local success = pcall(function() tool.Parent = char end)
+        if not success then return end
+        task.wait(0.05)
+        local remote = getRemote(tool)
+        if remote then pcall(function() remote:FireServer("Reload") end) end
+        task.wait(0.05)
+        if originalTool and originalTool.Parent then
+            pcall(function() originalTool.Parent = char end)
+        elseif currentTool and currentTool.Parent then
+            pcall(function() currentTool.Parent = char end)
+        end
+        if originalTool ~= tool and tool.Parent == char then
+            pcall(function() tool.Parent = lp.Backpack end)
+        end
+    end
+    local monitoredTools = {}
+    local reloadDebounce = {}
+    local function onShotsChanged(tool, shotsObj)
+        return function()
+            if not ENABLED then return end
+            if shotsObj.Value == 0 then
+                local now = tick()
+                if reloadDebounce[tool] and now - reloadDebounce[tool] < RELOAD_DEBOUNCE_TIME then return end
+                reloadDebounce[tool] = now
+                local char = lp.Character
+                local originalTool = char and char:FindFirstChildOfClass("Tool")
+                task.spawn(function() performReload(tool, originalTool) end)
+            end
+        end
+    end
+    local function monitorTool(tool)
+        if not tool or not isGun(tool) then return end
+        if monitoredTools[tool] then return end
+        local shotsObj = tool:FindFirstChild("ShotsLoaded")
+        if not shotsObj then
+            local wsFolder = Workspace:FindFirstChild("Players")
+            if wsFolder then
+                local playerFolder = wsFolder:FindFirstChild(lp.Name)
+                if playerFolder then
+                    local toolFolder = playerFolder:FindFirstChild(tool.Name)
+                    if toolFolder then shotsObj = toolFolder:FindFirstChild("ShotsLoaded") end
+                end
+            end
+        end
+        if shotsObj and (shotsObj:IsA("IntValue") or shotsObj:IsA("NumberValue")) then
+            local conn = shotsObj.Changed:Connect(onShotsChanged(tool, shotsObj))
+            monitoredTools[tool] = conn
+        end
+    end
+    local function scanAllTools()
+        for _, tool in ipairs(lp.Backpack:GetChildren()) do
+            if tool:IsA("Tool") and isGun(tool) then monitorTool(tool) end
+        end
+        local char = lp.Character
+        if char then
+            for _, tool in ipairs(char:GetChildren()) do
+                if tool:IsA("Tool") and isGun(tool) then monitorTool(tool) end
+            end
+        end
+    end
+    lp.Backpack.ChildAdded:Connect(function(c) if c:IsA("Tool") and isGun(c) then monitorTool(c) end end)
+    lp.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        char.ChildAdded:Connect(function(c) if c:IsA("Tool") and isGun(c) then monitorTool(c) end end)
+        scanAllTools()
+    end)
+    scanAllTools()
+    return {
+        enable = function() ENABLED = true; scanAllTools() end,
+        disable = function() ENABLED = false end,
+    }
+]]
 
-    SilentAimTab:Toggle({
-        Title = "使用视野",
-        Desc = "只瞄准视野内的目标",
-        Default = SILENT_AIM_USE_FOV,
-        Callback = function(state)
-            SILENT_AIM_USE_FOV = state
-            if updateSilentAimFovCircle then updateSilentAimFovCircle() end
-        end,
-    })
+local blackGun, autoReload
+GunTab:Toggle({
+    Title = "自动黑枪",
+    Desc = "自动瞄准并射击靠近队友的自爆僵尸",
+    Default = false,
+    Callback = function(state)
+        if state then
+            if not blackGun then blackGun = loadstring(blackGunSource)() end
+            blackGun.enable()
+        else
+            if blackGun then blackGun.disable() end
+        end
+    end,
+})
 
-    SilentAimTab:Toggle({
-        Title = "移动视野",
-        Desc = "视野圈固定在屏幕中央",
-        Default = SILENT_AIM_MOBILE_FOV,
-        Callback = function(state)
-            SILENT_AIM_MOBILE_FOV = state
-            if updateSilentAimFovCircle then updateSilentAimFovCircle() end
-        end,
-    })
-
-    SilentAimTab:Toggle({
-        Title = "显示视野",
-        Desc = "绘制静默瞄准视野圈（青色）",
-        Default = SILENT_AIM_SHOW_FOV,
-        Callback = function(state)
-            SILENT_AIM_SHOW_FOV = state
-            if updateSilentAimFovCircle then updateSilentAimFovCircle() end
-        end,
-    })
-
-    SilentAimTab:Slider({
-        Title = "视野大小",
-        Desc = "静默瞄准视野圈大小",
-        Value = { Min = 10, Max = 120, Default = SILENT_AIM_FOV_SIZE },
-        Callback = function(val)
-            SILENT_AIM_FOV_SIZE = val
-            if updateSilentAimFovCircle then updateSilentAimFovCircle() end
-        end,
-    })
-
-    SilentAimTab:Toggle({
-        Title = "静默瞄准拯救玩家",
-        Desc = "将子弹重定向到正在抓住队友的僵尸",
-        Default = SILENT_AIM_SAVE_PLAYERS_ENABLED,
-        Callback = function(state) SILENT_AIM_SAVE_PLAYERS_ENABLED = state end,
-    })
-
-    SilentAimTab:Toggle({
-        Title = "静默瞄准自爆僵尸靠近队友",
-        Desc = "只瞄准靠近队友的自爆僵尸",
-        Default = SILENT_AIM_BOMBER_NEAR_ENABLED,
-        Callback = function(state) SILENT_AIM_BOMBER_NEAR_ENABLED = state end,
-    })
-
-    SavePlayersTab:Toggle({
-        Title = "自动拯救玩家",
-        Desc = "射击正在抓住队友的僵尸",
-        Default = AUTO_SAVE_PLAYERS_ENABLED,
-        Callback = function(state) AUTO_SAVE_PLAYERS_ENABLED = state end,
-    })
-
-    SavePlayersTab:Toggle({
-        Title = "瞬间拯救玩家",
-        Desc = "拯救时无动画",
-        Default = INSTANT_SAVE_PLAYERS_ENABLED,
-        Callback = function(state) INSTANT_SAVE_PLAYERS_ENABLED = state end,
-    })
-
-    SavePlayersTab:Slider({
-        Title = "拯救玩家延迟",
-        Desc = "开火前延迟（秒）",
-        Value = { Min = 0, Max = 5, Default = SAVE_PLAYER_DELAY },
-        Callback = function(val) SAVE_PLAYER_DELAY = val end,
-    })
-
-    SavePlayersTab:Slider({
-        Title = "最大拯救距离",
-        Desc = "拯救玩家的最大距离",
-        Value = { Min = 50, Max = 600, Default = MAX_SAVE_PLAYERS_RANGE },
-        Callback = function(val) MAX_SAVE_PLAYERS_RANGE = val end,
-    })
-
-    SafetyTab:Toggle({
-        Title = "不要射击靠近队友的自爆僵尸",
-        Desc = "避免误伤队友",
-        Default = BOMBER_SAFE_TEAMMATES,
-        Callback = function(state) BOMBER_SAFE_TEAMMATES = state end,
-    })
-
-    SafetyTab:Toggle({
-        Title = "不要射击靠近我的自爆僵尸",
-        Desc = "避免自伤",
-        Default = BOMBER_SAFE_SELF,
-        Callback = function(state) BOMBER_SAFE_SELF = state end,
-    })
-
-    SafetyTab:Slider({
-        Title = "自爆僵尸安全半径",
-        Desc = "安全检测半径",
-        Value = { Min = 5, Max = 30, Default = BOMBER_SAFE_RADIUS },
-        Callback = function(val) BOMBER_SAFE_RADIUS = val end,
-    })
-
-    SafetyTab:Toggle({
-        Title = "黑枪功能：炸飞队友",
-        Desc = "开启后射击自爆僵尸时会炸飞附近队友（恶搞/黑枪）",
-        Default = SHOOT_BOMBER_NEAR_TEAMMATES,
-        Callback = function(state) SHOOT_BOMBER_NEAR_TEAMMATES = state end,
-    })
-
-    TargetTab:Toggle({
-        Title = "可视化自爆僵尸爆炸半径",
-        Desc = "在自爆僵尸周围显示爆炸范围圈",
-        Default = BOMBER_VISUALIZE_RADIUS,
-        Callback = function(state) BOMBER_VISUALIZE_RADIUS = state end,
-    })
-
-    TargetTab:Toggle({
-        Title = "目标透视",
-        Desc = "高亮显示当前锁定的目标",
-        Default = TARGET_ESP_ENABLED,
-        Callback = function(state) TARGET_ESP_ENABLED = state end,
-    })
-
-    TargetTab:Toggle({
-        Title = "显示瞄准点",
-        Desc = "在瞄准位置显示红点",
-        Default = AIM_DOT_ENABLED,
-        Callback = function(state) AIM_DOT_ENABLED = state end,
-    })
-
-    MiscTab:Toggle({
-        Title = "手持迫击炮计时",
-        Desc = "显示迫击炮弹爆炸倒计时",
-        Default = HAND_MORTAR_TIMING_ENABLED,
-        Callback = function(state)
-            HAND_MORTAR_TIMING_ENABLED = state
-            if not state and destroyHandMortarGui then destroyHandMortarGui() end
-        end,
-    })
-
-    -- 启动所有后台循环和钩子
-    if setupCharacterMonitoring then setupCharacterMonitoring() end
-    if startMainLoop then startMainLoop() end
-    if startSilentAimLoop then startSilentAimLoop() end
-    if setupSilentAimHooks then setupSilentAimHooks() end
-end
+GunTab:Toggle({
+    Title = "自动换弹",
+    Desc = "子弹为0时自动换弹",
+    Default = false,
+    Callback = function(state)
+        if state then
+            if not autoReload then autoReload = loadstring(autoReloadSource)() end
+            autoReload.enable()
+        else
+            if autoReload then autoReload.disable() end
+        end
+    end,
+})
 
 -- ================== 玩家功能 Section（半无敌） ==================
 local PlayerTab = Sections.Player:Tab({ Title = "半无敌", Icon = "shield" })
-
 PlayerTab:Toggle({
     Title = "半无敌模式",
     Desc = "输入 ;kill 玩家名 后自动跟随并碰撞目标",
@@ -1348,7 +1473,6 @@ PlayerTab:Toggle({
             local Players = game:GetService("Players")
             local lp = Players.LocalPlayer
             local targetPlayer = nil
-
             local function findPlayer(text)
                 text = text:lower()
                 for _, plr in pairs(Players:GetPlayers()) do
@@ -1357,7 +1481,6 @@ PlayerTab:Toggle({
                     end
                 end
             end
-
             lp.Chatted:Connect(function(msg)
                 if not _G.SemiGod then return end
                 if msg:sub(1,6):lower() == ";kill " then
@@ -1368,7 +1491,6 @@ PlayerTab:Toggle({
                     end
                 end
             end)
-
             task.spawn(function()
                 while _G.SemiGod do
                     if targetPlayer then
@@ -1387,7 +1509,6 @@ PlayerTab:Toggle({
                     task.wait()
                 end
             end)
-
             task.spawn(function()
                 while _G.SemiGod do
                     local hum = lp.Character and lp.Character:FindFirstChild("Humanoid")
@@ -1399,6 +1520,7 @@ PlayerTab:Toggle({
     end,
 })
 
+-- 最终通知
 WindUI:Notify({
     Title = "水调歌头",
     Content = "脚本加载完成！",
