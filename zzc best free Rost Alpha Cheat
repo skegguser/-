@@ -3371,7 +3371,6 @@ do
         Combat = Window:AddTab('Combat'),
         Visual = Window:AddTab('Visual'),
         Player = Window:AddTab('Player'),
-        Info = Window:AddTab('Info'),
     }
     Settings:InitializeSettingsTab(Window, 'VomaglaConfig', 'Config')
 
